@@ -1,0 +1,88 @@
+{
+  "data_source": "rtldavis",
+  "rtldavis": {
+    "bin": "__PROJECT_DIR__/bin/rtldavis",
+    "source_dir": "__GOPATH__/src/github.com/mdickers47/rtldavis",
+    "gopath": "__GOPATH__",
+    "region": "EU",
+    "ppm": 0,
+    "transmitters": 255,
+    "maxmissed": 4,
+    "gain": 0,
+    "log_undefined": false,
+    "extra_args": []
+  },
+  "serial": {
+    "port": "/dev/ttyACM0",
+    "baud": 19200
+  },
+  "station": {
+    "name": "My Weather Station",
+    "latitude": 0.0,
+    "longitude": 0.0,
+    "timezone": "Europe/London",
+    "transmitter_id": null
+  },
+  "units": "metric",
+  "rain_bucket_mm": 0.2,
+  "pressure": {
+    "source": "placeholder",
+    "placeholder_hpa": 1013.2,
+    "bme280_i2c_addr": "0x76"
+  },
+  "transport": "sftp",
+  "sftp": {
+    "host": "",
+    "port": 22,
+    "user": "",
+    "password": "",
+    "key_file": "",
+    "remote_dir": ""
+  },
+  "scp": {
+    "host": "",
+    "port": 22,
+    "user": "",
+    "key_file": "__HOME__/.ssh/id_ed25519",
+    "remote_dir": ""
+  },
+  "ftp": {
+    "host": "",
+    "port": 21,
+    "user": "",
+    "password": "",
+    "ftps": false,
+    "remote_dir": ""
+  },
+  "files": {
+    "clientraw": {
+      "remote_name": "clientraw.txt",
+      "interval_sec": 2
+    },
+    "clientrawextra": {
+      "remote_name": "clientrawextra.txt",
+      "interval_sec": 60
+    },
+    "clientrawhour": {
+      "remote_name": "clientrawhour.txt",
+      "interval_sec": 3600
+    },
+    "clientrawdaily": {
+      "remote_name": "clientrawdaily.txt",
+      "interval_sec": 86400
+    }
+  },
+  "web_port": 8080,
+  "templates_dir": "templates",
+  "state_db": "state.sqlite",
+  "tide": {
+    "enabled": false,
+    "station": "Portsmouth, England",
+    "days": 5,
+    "tide_bin": "/usr/local/bin/tide",
+    "hfile_path": "tide-data/harmonics-2004-06-14.tcd",
+    "remote_name": "tideprediction.html",
+    "remote_dir": null,
+    "interval_sec": 86400
+  }
+}

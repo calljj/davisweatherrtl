@@ -1,0 +1,18 @@
+# Real config -- holds credentials once configured. Copy config.example.json instead.
+config.json
+
+# Runtime state / generated data
+state.sqlite
+bin/
+govendor/
+venv/
+*.pyc
+__pycache__/
+.pytest_cache/
+
+# Tide harmonics data -- third-party binary download, not redistributed here (see README)
+tide-data/*.tcd
+
+# Editor/OS cruft
+.DS_Store
+*.swp
