@@ -24,6 +24,12 @@ optional independent tide-prediction feature.
   you every hit, and lets you pick the one to use -- then writes and rebuilds
   `rtldavis` automatically. See [Frequency calibration](#frequency-calibration)
   below.
+- **Wireless repeater support**: decodes packets relayed through a Davis
+  wireless repeater, not just direct ISS transmissions -- confirmed working
+  in production against real hardware. See
+  [Wireless repeater support](#wireless-repeater-support) below.
+- **AFC status visibility**: `rtldavis`'s own automatic frequency-drift
+  correction (previously applied silently) is now shown live on `/status`.
 - Optional independent tide-prediction feature (XTide-based).
 - Runs as a systemd service, survives reboots and dongle disconnects.
 
@@ -117,11 +123,23 @@ than frequency calibration -- confirm signal is actually present with
 result for periodic (~2.5s) bursts near the 5 nominal channels before
 assuming a wider search range will help.
 
+`/calibrate` and AFC solve different problems and both run: `/calibrate` is
+a one-time (or occasional) manual step that finds your dongle's baseline
+Channel 1 offset. AFC (see below) then continuously tracks smaller,
+ongoing drift per transmitter/channel automatically, on every packet,
+without needing another calibration run. The current AFC correction is
+shown on `/status`.
+
 ## Wireless repeater support
 
-Status: the core decode is confirmed working against live traffic; one
-detail (what the repeater-info bytes actually mean) is still unsolved --
-see below.
+**Status: working in production.** This project successfully receives and
+decodes packets relayed through a Davis wireless repeater -- confirmed
+live, continuously, against a real station transmitting through a real
+repeater (not just a one-off capture). One detail (what the repeater-info
+bytes actually mean) is still unsolved -- see below -- but it doesn't
+block decoding: CRC validation for repeater-relayed packets is confirmed
+correct, and `/status` shows "via repeater" plus live decoded values when
+that's the packet's path.
 
 Davis's classic 8-byte packet format and CRC only describe direct
 ISS-to-console transmissions. A repeater relaying that data adds 2 extra
@@ -183,6 +201,45 @@ number, 1-8, matching your console/DIP switch), and units.
 is excluded from this repo via `.gitignore` -- copy `config.example.json` if
 you need to regenerate it (`install.sh` does this automatically on first
 run).
+
+### The `rtldavis` config block
+
+```json
+"rtldavis": {
+  "bin": "/path/to/davis-clientraw/bin/rtldavis",
+  "source_dir": "/path/to/davis-clientraw/govendor/src/github.com/mdickers47/rtldavis",
+  "gopath": "/path/to/davis-clientraw/govendor",
+  "region": "EU",
+  "ppm": 0,
+  "transmitters": 255,
+  "maxmissed": 4,
+  "gain": 0,
+  "log_undefined": false,
+  "extra_args": []
+}
+```
+
+- **`bin`**: the built `rtldavis` binary the service actually launches.
+- **`source_dir`** / **`gopath`**: where `/calibrate`'s "Apply & rebuild"
+  step (and any manual rebuild) compiles from. `install.sh` sets these up
+  as a **self-contained synthetic GOPATH under the project's own
+  `govendor/`** (copied from the tracked `vendor/rtldavis/` source at
+  install time) -- specifically so the build never depends on some other
+  checkout living outside the project, e.g. an old `~/go/src/...` GOPATH
+  from a previous manual setup. If these point anywhere else, rebuilds
+  (calibration or otherwise) will silently compile stale/wrong source --
+  there's no error, `go build` just succeeds against whatever's actually at
+  that path. If you're migrating an older install onto a fresh clone of
+  this repo, make sure `source_dir`/`gopath` get repointed at the new
+  `govendor/` layout, not left on the old location.
+- **`transmitters`**: bitmask of Davis transmitter IDs 0-7 to listen for at
+  the RF layer (bit0=ID0 ... bit7=ID7). `255` = all IDs, useful before
+  you've confirmed your station's real ID. The app-level
+  `station.transmitter_id` filter narrows it down once you have.
+- **`gain`**: tuner gain in tenths of a dB (e.g. `207` = 20.7dB); `0` = AGC.
+  Only specific steps are supported by the R828D tuner -- see `rtldavis -tf
+  EU -v` startup log, or the `/calibrate` page's gain field, for the exact
+  list.
 
 ## Tide predictions (tideprediction.html)
 
