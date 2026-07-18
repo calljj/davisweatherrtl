@@ -46,7 +46,14 @@ func NewPacketConfig(symbolLength int, preambleTolerance int) (cfg dsp.PacketCon
 		19200,
 		14,
 		16,
-		80,
+		// Davis's real over-the-air packet is up to 10 bytes: an 8-byte
+		// classic payload (header/windspeed/winddir/sensor/CRC) plus,
+		// for repeater-relayed transmissions only, 2 more bytes of
+		// repeater routing info that direct-from-ISS packets pad with
+		// 0xFF 0xFF instead. 96 symbols = 12 raw bytes = 2 bytes of
+		// pre-payload margin (see Parse()) + the full 10-byte payload,
+        // wide enough to capture the repeater bytes when present.
+		96,
 		"1100101110001001",
 		preambleTolerance,
 	)
@@ -204,6 +211,52 @@ func (p *Parser) SeqToHop(n int) int {
 	return p.hopPattern[n % p.ChannelCount]
 }
 
+// repeaterHypothesis is a structural guess at how a repeater-relayed
+// packet's CRC actually incorporates its 2 extra bytes. Davis has never
+// published the real formula; a public community write-up (DavisRFM69
+// wiki) confirms the extra bytes exist and says the classic CRC covers
+// "bytes 1,2,3,4,5" while the repeater CRC covers "bytes 1,2,3,4,5,8,9",
+// but doesn't specify byte-order/inclusion precisely enough to derive a
+// single certain formula. build takes the 10-byte raw payload (header,
+// 5 data bytes, 2 CRC bytes, 2 repeater-info bytes, in that transmitted
+// order) and returns the byte sequence to run through the residue check
+// (Checksum(...) == 0) -- the same style of check already proven correct
+// for classic 8-byte packets, which is CRC over the *entire* transmitted
+// block including the CRC's own bytes, in transmission order.
+type repeaterHypothesis struct {
+	name  string
+	build func(p []byte) []byte
+}
+
+var repeaterHypotheses = []repeaterHypothesis{
+	// Straightforward extension of the classic whole-block convention:
+	// header + data + CRC + repeater-info, all in transmitted order.
+	{"seq10", func(p []byte) []byte { return p[:10] }},
+	// Same, but excluding the header byte (the DavisRFM69 doc's byte
+	// ranges never mention byte 0).
+	{"seq10_noheader", func(p []byte) []byte { return p[1:10] }},
+	// Doc-literal ordering: the CRC is *computed* over data+repeater-info
+	// (skipping over its own future position), so for a residue check we
+	// move the CRC's own 2 bytes to the end of the sequence instead of
+	// their natural transmitted position in the middle.
+	{"reorder_crc_last", func(p []byte) []byte {
+		b := make([]byte, 0, 9)
+		b = append(b, p[1:6]...)  // data bytes
+		b = append(b, p[8:10]...) // repeater info
+		b = append(b, p[6:8]...)  // CRC bytes, moved last
+		return b
+	}},
+	// Same reordering, but including the header byte at the front.
+	{"reorder_crc_last_with_header", func(p []byte) []byte {
+		b := make([]byte, 0, 10)
+		b = append(b, p[0])
+		b = append(b, p[1:6]...)
+		b = append(b, p[8:10]...)
+		b = append(b, p[6:8]...)
+		return b
+	}},
+}
+
 // Given a list of packets, check them for validity and ignore duplicates,
 // return a list of parsed messages.
 func (p *Parser) Parse(pkts []dsp.Packet) (msgs []Message) {
@@ -221,8 +274,43 @@ func (p *Parser) Parse(pkts []dsp.Packet) (msgs []Message) {
 		}
 		seen[s] = true
 
-		// If the checksum fails, bail.
-		if p.Checksum(pkt.Data[2:]) != 0 {
+		// pkt.Data[2:] strips 2 leading margin bytes that were never part
+		// of Davis's actual payload -- what's left is up to 10 bytes: the
+		// classic 8-byte payload (header/windspeed/winddir/sensor/CRC),
+		// plus, for repeater-relayed packets only, 2 more bytes of
+		// repeater routing info that get folded into the CRC too. Direct
+		// and repeated packets can't be told apart before checking the
+		// checksum, so try the classic (8-byte) hypothesis first -- that's
+		// proven correct for direct-from-ISS reception -- and only fall
+		// back to the repeaterHypotheses list (EXPERIMENTAL, see above) if
+		// it fails.
+		payload := pkt.Data[2:]
+		repeated := false
+		matchedHypothesis := ""
+		switch {
+		case len(payload) >= 8 && p.Checksum(payload[:8]) == 0:
+			payload = payload[:8]
+		case len(payload) >= 10:
+			for _, h := range repeaterHypotheses {
+				if p.Checksum(h.build(payload[:10])) == 0 {
+					payload = payload[:10]
+					repeated = true
+					matchedHypothesis = h.name
+					break
+				}
+			}
+			if !repeated {
+				// No hypothesis passed. Could be plain noise that happened
+				// to match the preamble, or a repeated packet whose real
+				// CRC formula doesn't match any guess above -- dump the
+				// raw bytes so a real repeater capture can be inspected by
+				// hand and used to work out the actual formula.
+				if Verbose {
+					log.Printf("candidate failed all CRC checks, raw=% 02X", pkt.Data)
+				}
+				continue
+			}
+		default:
 			continue
 		}
 		// Thanks to Steve Wormley for an improved calculation of freqError.
@@ -250,7 +338,7 @@ func (p *Parser) Parse(pkts []dsp.Packet) (msgs []Message) {
 		// The preamble is a set of 0 and 1 symbols, equal in number. The driminator's output is
 		// measured in radians.
 		freqerr := -int((mean*float64(p.Cfg.SampleRate))/(2*math.Pi))
-		msg := NewMessage(pkt)
+		msg := NewMessage(pkt, payload, repeated, matchedHypothesis)
 		msgs = append(msgs, msg)
 		// Per transmitter and per channel we have a list of p.maxTrChList frequency errors
 		// The average value of the frequencu erreors in the list is used for the frequency correction.
@@ -264,16 +352,30 @@ func (p *Parser) Parse(pkts []dsp.Packet) (msgs []Message) {
 
 type Message struct {
 	dsp.Packet
-	ID 	       byte
-	BatteryLow bool
+	ID 	        byte
+	BatteryLow  bool
+	Repeated    bool
+	// RepeaterInfo holds the 2 extra bytes present only on repeater-relayed
+	// packets (nil for direct-from-ISS packets). Meaning not yet decoded --
+	// see Parse().
+	RepeaterInfo []byte
+	// MatchedHypothesis names which entry in repeaterHypotheses validated
+	// this packet's CRC (empty for direct/classic packets).
+	MatchedHypothesis string
 }
 
-func NewMessage(pkt dsp.Packet) (m Message) {
+func NewMessage(pkt dsp.Packet, payload []byte, repeated bool, matchedHypothesis string) (m Message) {
 	m.Idx = pkt.Idx
-	m.Data = make([]byte, len(pkt.Data)-2)
-	copy(m.Data, pkt.Data[2:])
+	m.Data = make([]byte, 8)
+	copy(m.Data, payload[:8])
 	m.ID = m.Data[0] & 0x7
 	m.BatteryLow = ((m.Data[0] >> 3) & 0x01 == 1)
+	m.Repeated = repeated
+	m.MatchedHypothesis = matchedHypothesis
+	if repeated {
+		m.RepeaterInfo = make([]byte, 2)
+		copy(m.RepeaterInfo, payload[8:10])
+	}
 	return m
 }
 

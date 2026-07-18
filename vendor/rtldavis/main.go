@@ -416,7 +416,7 @@ func main() {
                 // check if msg comes from undefined sensor
                 if msgIdToChan[int(msg.ID)] == 9 {
                     if *undefined {
-                        log.Printf("undefined: %02X ID=%d", msg.Data, msg.ID)
+                        log.Printf("undefined: %02X ID=%d Repeated=%v RepeaterInfo=%02X Hypothesis=%s", msg.Data, msg.ID, msg.Repeated, msg.RepeaterInfo, msg.MatchedHypothesis)
                     }
                     idUndefs[int(msg.ID)]++
                     continue  // read next message
@@ -428,7 +428,7 @@ func main() {
                             visitCount +=1
                             chLastVisits[msgIdToChan[int(msg.ID)]] = curTime
                             chLastHops[msgIdToChan[int(msg.ID)]] = p.HopToSeq(actHopChanIdx)
-                            log.Printf("TRANSMITTER %d SEEN", msg.ID)
+                            log.Printf("TRANSMITTER %d SEEN Repeated=%v RepeaterInfo=%02X Hypothesis=%s", msg.ID, msg.Repeated, msg.RepeaterInfo, msg.MatchedHypothesis)
                             if visitCount == maxChan {
                                 if maxChan > 1 {
                                     log.Printf("ALL TRANSMITTERS SEEN")
@@ -444,13 +444,13 @@ func main() {
                         chLastHops[msgIdToChan[int(msg.ID)]] = p.HopToSeq(actHopChanIdx)
                         chLastVisits[msgIdToChan[int(msg.ID)]] = curTime
                         if *undefined {
-                            log.Printf("%02X %d %d %d %d %d msg.ID=%d undefined:%d", 
-                                msg.Data, chTotMsgs[0], chTotMsgs[1], chTotMsgs[2], chTotMsgs[3], totInit, msg.ID, idUndefs)
+                            log.Printf("%02X %d %d %d %d %d msg.ID=%d undefined:%d Repeated=%v RepeaterInfo=%02X Hypothesis=%s",
+                                msg.Data, chTotMsgs[0], chTotMsgs[1], chTotMsgs[2], chTotMsgs[3], totInit, msg.ID, idUndefs, msg.Repeated, msg.RepeaterInfo, msg.MatchedHypothesis)
                         } else if graphiteSrv != nil {
                             graphiteChan <- protocol.DecodeMsg(msg)
 												} else {
-                            log.Printf("%02X %d %d %d %d %d msg.ID=%d", 
-                                msg.Data, chTotMsgs[0], chTotMsgs[1], chTotMsgs[2], chTotMsgs[3], totInit, msg.ID) 
+                            log.Printf("%02X %d %d %d %d %d msg.ID=%d Repeated=%v RepeaterInfo=%02X Hypothesis=%s",
+                                msg.Data, chTotMsgs[0], chTotMsgs[1], chTotMsgs[2], chTotMsgs[3], totInit, msg.ID, msg.Repeated, msg.RepeaterInfo, msg.MatchedHypothesis)
                         }
                         handleNxtPacket = true
                     }
