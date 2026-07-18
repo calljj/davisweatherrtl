@@ -293,6 +293,7 @@ def create_app(
         )
 
         last_packet_time = state.get("last_packet_time")
+        via_repeater = " via repeater" if state.get("last_packet_repeated") else ""
         if not last_packet_time:
             signal_dot, signal_color, signal_text = "●", "#b00", "NO SIGNAL (no packet ever received)"
         else:
@@ -300,9 +301,9 @@ def create_app(
                 dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(last_packet_time)
             ).total_seconds()
             if age_sec <= 30:
-                signal_dot, signal_color, signal_text = "●", "green", f"RECEIVING (last packet {age_sec:.0f}s ago)"
+                signal_dot, signal_color, signal_text = "●", "green", f"RECEIVING (last packet {age_sec:.0f}s ago{via_repeater})"
             else:
-                signal_dot, signal_color, signal_text = "●", "#b00", f"NO SIGNAL (last packet {age_sec:.0f}s ago)"
+                signal_dot, signal_color, signal_text = "●", "#b00", f"NO SIGNAL (last packet {age_sec:.0f}s ago{via_repeater})"
 
         channels = get_current_channels()
         if channels:

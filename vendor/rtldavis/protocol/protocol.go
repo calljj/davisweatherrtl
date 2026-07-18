@@ -96,7 +96,7 @@ func NewParser(symbolLength int, tf string, preambleTolerance int) (p Parser) {
 	// rewrite this table automatically. See the main project's README.md.
 	if tf == "EU" {
 		p.channels = []int{
-			868077250, 868197250, 868317250, 868437250, 868557250, // EU nominal (Davis spec)
+			868098250, 868218250, 868338250, 868458250, 868578250, // EU measured 20260718 near repeater A (station 2 relay), confirmed via live decode
 		}
 		p.ChannelCount = len(p.channels)
 		p.hopIdx = rand.Intn(p.ChannelCount)
