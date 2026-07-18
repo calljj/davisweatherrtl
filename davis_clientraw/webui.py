@@ -377,6 +377,8 @@ def create_app(
         <label>Start frequency</label><input id="startfreq" value="868100000">
         <label>End frequency</label><input id="endfreq" value="868140000">
         <label>Step</label><input id="stepfreq" value="1000">
+        <label>Gain (tenths of dB; 0 = AGC/auto)</label>
+        <input id="gain" value="{{ current_gain }}">
         <button onclick="startSweep()">Start sweep</button>
         <button onclick="cancelSweep()">Cancel</button>
         </fieldset>
@@ -467,6 +469,7 @@ def create_app(
                 startfreq: document.getElementById('startfreq').value,
                 endfreq: document.getElementById('endfreq').value,
                 stepfreq: document.getElementById('stepfreq').value,
+                gain: document.getElementById('gain').value,
             });
             fetch('{{ url_for("calibrate_start") }}', {method: 'POST', body: body})
                 .then(() => poll());
@@ -486,6 +489,7 @@ def create_app(
                 body,
                 spacing=_calibrate.CHANNEL_SPACING_HZ,
                 count=_calibrate.CHANNEL_COUNT,
+                current_gain=load_config()["rtldavis"].get("gain", 0),
             )
         )
 
@@ -494,7 +498,9 @@ def create_app(
         startfreq = int(request.form["startfreq"])
         endfreq = int(request.form["endfreq"])
         stepfreq = int(request.form["stepfreq"])
-        start_calibration_sweep(startfreq, endfreq, stepfreq)
+        gain_raw = request.form.get("gain", "").strip()
+        gain = int(gain_raw) if gain_raw else None
+        start_calibration_sweep(startfreq, endfreq, stepfreq, gain)
         return jsonify({"ok": True})
 
     @app.route("/calibrate/status")

@@ -338,9 +338,13 @@ class Application:
     # ------------------------------------------------------------------
     # Frequency calibration (GUI-triggered)
     # ------------------------------------------------------------------
-    def start_calibration_sweep(self, startfreq: int, endfreq: int, stepfreq: int) -> None:
+    def start_calibration_sweep(
+        self, startfreq: int, endfreq: int, stepfreq: int, gain: int | None = None
+    ) -> None:
         """Pauses normal packet reception (it and the sweep can't share the
-        RTL-SDR device) and starts a calibration sweep in the background."""
+        RTL-SDR device) and starts a calibration sweep in the background.
+        gain overrides the configured rtldavis.gain for this sweep only --
+        config.json is not modified."""
         rtldavis_cfg = self.config["rtldavis"]
         self._reception_paused.set()
         if self._source is not None:
@@ -349,7 +353,7 @@ class Application:
             rtldavis_cfg["bin"],
             rtldavis_cfg["region"],
             rtldavis_cfg.get("transmitters", 255),
-            rtldavis_cfg.get("gain", 0),
+            gain if gain is not None else rtldavis_cfg.get("gain", 0),
         )
         self._calibrator.start(startfreq, endfreq, stepfreq)
 
