@@ -1,17 +1,30 @@
 """Packet sources: abstract interface plus the rtldavis (RTL-SDR) implementation.
 
-rtldavis (github.com/lheijst/rtldavis, EU-capable fork) logs via Go's
-standard `log` package with log.SetFlags(log.Lmicroseconds) and no output
-redirection, so ALL of its output -- diagnostics and data packets alike --
-goes to stderr, not stdout (confirmed by reading main.go and by running the
-built binary standalone on this Pi). A received Davis packet is logged as:
+rtldavis (this project's vendored, repeater-capable fork -- see
+vendor/rtldavis/) logs via Go's standard `log` package with
+log.SetFlags(log.Lmicroseconds) and no output redirection, so ALL of its
+output -- diagnostics and data packets alike -- goes to stderr, not stdout
+(confirmed by reading main.go and by running the built binary standalone
+on this Pi). A received Davis packet is logged as:
 
-    HH:MM:SS.ffffff <16 hex chars = 8 raw packet bytes> <counters...> msg.ID=<N>
+    HH:MM:SS.ffffff <16 hex chars = 8 raw packet bytes> <counters...> msg.ID=<N> \
+        [undefined:[...]] Repeated=<true|false> RepeaterInfo=<0 or 4 hex chars> \
+        Hypothesis=<name> FreqCorr=<signed Hz>
 
-e.g. "11:23:45.123456 8004700F990091AB 12 34 56 78 9 msg.ID=1"
+e.g. "11:23:45.123456 8004700F990091AB 12 34 56 78 9 msg.ID=1 Repeated=false RepeaterInfo=[] Hypothesis= FreqCorr=-140"
+or, for a repeater-relayed packet:
+"11:23:45.123456 8108812DD9001572 2 0 0 0 0 msg.ID=1 Repeated=true RepeaterInfo=8501 Hypothesis=reorder_crc_last_with_header FreqCorr=-140"
+
+The Repeated/RepeaterInfo/Hypothesis/FreqCorr suffix is this project's own
+addition (see vendor/rtldavis/protocol/protocol.go and main.go) -- upstream
+rtldavis doesn't have it, so the regex treats it as optional to stay
+compatible with plain builds. FreqCorr is the AFC correction (in Hz) that
+was applied to the tuner for the hop that produced this packet -- a running
+per-transmitter-per-channel weighted average of past frequency errors (see
+protocol.go's SetHop()), not something newly computed by this project.
 
 RtldavisSource spawns the binary with stderr merged into stdout and matches
-that line shape to extract the 8 raw packet bytes.
+that line shape to extract the 8 raw packet bytes plus repeater/AFC metadata.
 """
 from __future__ import annotations
 
@@ -20,12 +33,42 @@ import re
 import subprocess
 import threading
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from queue import Empty, Queue
 from typing import Iterator, Optional
 
 logger = logging.getLogger(__name__)
 
-DATA_LINE_RE = re.compile(r"^\d\d:\d\d:\d\d\.\d{6}\s+([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})\s+\d")
+DATA_LINE_RE = re.compile(
+    r"^\d\d:\d\d:\d\d\.\d{6}\s+"
+    r"([0-9A-Fa-f]{16})\s+"          # group 1: 8 raw packet bytes
+    r"(?:-?\d+\s+){5}"
+    r"msg\.ID=\d+"
+    r"(?:\s+undefined:\[[^\]]*\])?"
+    r"(?:\s+Repeated=(true|false)"   # group 2: repeated flag
+    r"\s+RepeaterInfo=([0-9A-Fa-f]*)"  # group 3: 0 or 4 hex chars
+    r"\s+Hypothesis=(\S*))?"          # group 4: hypothesis name, may be empty
+    r"(?:\s+FreqCorr=(-?\d+))?"       # group 5: AFC correction in Hz, may be absent
+)
+
+
+@dataclass
+class ReceivedPacket:
+    """A packet as received from rtldavis, with repeater metadata attached.
+    `data` is always the 8 classic payload bytes (header/wind/sensor/CRC) --
+    identical structure whether the packet arrived direct-from-ISS or via a
+    repeater, per protocol.go's NewMessage(). `repeater_info`, when present,
+    holds the 2 extra bytes a repeater-relayed packet carries; their exact
+    meaning isn't fully decoded yet (see davis_decode.py), but they're
+    needed to independently re-verify the packet's CRC."""
+
+    data: list[int]
+    repeated: bool = False
+    repeater_info: Optional[list[int]] = field(default=None)
+    # AFC correction (Hz) rtldavis applied for the hop that produced this
+    # packet. None if the running binary predates this project's FreqCorr
+    # logging addition.
+    freq_corr_hz: Optional[int] = field(default=None)
 
 
 class PacketSource(ABC):
@@ -33,8 +76,8 @@ class PacketSource(ABC):
     def start(self) -> None: ...
 
     @abstractmethod
-    def packets(self) -> Iterator[list[int]]:
-        """Yield raw 8-byte Davis packets as they arrive. Blocks between packets."""
+    def packets(self) -> Iterator[ReceivedPacket]:
+        """Yield packets as they arrive. Blocks between packets."""
         ...
 
     @abstractmethod
@@ -108,7 +151,7 @@ class RtldavisSource(PacketSource):
             self._queue.put(line.rstrip("\n"))
         logger.warning("rtldavis process output stream ended")
 
-    def packets(self) -> Iterator[list[int]]:
+    def packets(self) -> Iterator[ReceivedPacket]:
         while not self._stop_requested:
             try:
                 line = self._queue.get(timeout=1.0)
@@ -131,8 +174,25 @@ class RtldavisSource(PacketSource):
                     logger.debug("rtldavis (non-data): %s", line)
                 continue
 
-            packet = [int(match.group(i), 16) for i in range(1, 9)]
-            yield packet
+            data_hex, repeated_str, repeater_info_hex, hypothesis, freq_corr_str = match.groups()
+            data = [int(data_hex[i:i+2], 16) for i in range(0, 16, 2)]
+            repeated = repeated_str == "true"
+            repeater_info = None
+            if repeated and repeater_info_hex:
+                repeater_info = [
+                    int(repeater_info_hex[i:i+2], 16) for i in range(0, len(repeater_info_hex), 2)
+                ]
+                logger.debug(
+                    "repeater-relayed packet, hypothesis=%s repeater_info=%s",
+                    hypothesis, repeater_info,
+                )
+            freq_corr_hz = int(freq_corr_str) if freq_corr_str is not None else None
+            yield ReceivedPacket(
+                data=data,
+                repeated=repeated,
+                repeater_info=repeater_info,
+                freq_corr_hz=freq_corr_hz,
+            )
 
     def stop(self) -> None:
         self._stop_requested = True

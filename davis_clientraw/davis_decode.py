@@ -25,6 +25,32 @@ def is_valid_packet(packet: list[int]) -> bool:
     return crc16_ccitt(bytes(packet)) == 0
 
 
+def is_valid_repeated_packet(packet: list[int], repeater_info: list[int]) -> bool:
+    """CRC check for a repeater-relayed packet. Davis's classic 8-byte CRC
+    (is_valid_packet) does NOT validate these -- a repeater packet folds 2
+    extra "repeater info" bytes into the checksum, using a different
+    formula than the direct/classic case.
+
+    CONFIRMED 2026-07-18 against 30 consecutive live packets from a real
+    station-2-via-repeater-A capture (see vendor/rtldavis/protocol/protocol.go,
+    repeaterHypotheses["reorder_crc_last_with_header"]): the CRC is computed
+    over [header, 5 data bytes, 2 repeater-info bytes], with the CRC's own
+    2 bytes (normally packet[6:8]) moved to the *end* of that sequence
+    instead of their natural transmitted-frame position in the middle --
+    i.e. the sender apparently computed the CRC over the "real" payload
+    (including repeater info) before knowing where the CRC value itself
+    would sit in the final transmitted frame.
+
+    The meaning of the 2 repeater-info bytes themselves isn't decoded yet:
+    empirically they track the packet's message_type nibble rather than
+    being a static per-repeater identifier (see README.md).
+    """
+    if len(packet) != 8 or len(repeater_info) != 2:
+        return False
+    reordered = [packet[0], *packet[1:6], *repeater_info, *packet[6:8]]
+    return crc16_ccitt(bytes(reordered)) == 0
+
+
 @dataclass
 class DecodedPacket:
     transmitter_id: int

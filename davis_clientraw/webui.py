@@ -293,6 +293,7 @@ def create_app(
         )
 
         last_packet_time = state.get("last_packet_time")
+        via_repeater = " via repeater" if state.get("last_packet_repeated") else ""
         if not last_packet_time:
             signal_dot, signal_color, signal_text = "●", "#b00", "NO SIGNAL (no packet ever received)"
         else:
@@ -300,9 +301,12 @@ def create_app(
                 dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(last_packet_time)
             ).total_seconds()
             if age_sec <= 30:
-                signal_dot, signal_color, signal_text = "●", "green", f"RECEIVING (last packet {age_sec:.0f}s ago)"
+                signal_dot, signal_color, signal_text = "●", "green", f"RECEIVING (last packet {age_sec:.0f}s ago{via_repeater})"
             else:
-                signal_dot, signal_color, signal_text = "●", "#b00", f"NO SIGNAL (last packet {age_sec:.0f}s ago)"
+                signal_dot, signal_color, signal_text = "●", "#b00", f"NO SIGNAL (last packet {age_sec:.0f}s ago{via_repeater})"
+
+        afc_hz = state.get("last_freq_corr_hz")
+        afc_html = f"{afc_hz:+d} Hz" if afc_hz is not None else "unknown"
 
         channels = get_current_channels()
         if channels:
@@ -315,6 +319,7 @@ def create_app(
         <p style="font-size:1.2em"><span style="color:{signal_color}">{signal_dot}</span> {signal_text}</p>
         <p>Packets/min: {state.get('packets_per_min', 0)}</p>
         <p>EU channel frequencies: {channels_html} &nbsp; <a href="{url_for('calibrate_page')}">(recalibrate)</a></p>
+        <p>AFC correction (last packet): {afc_html}</p>
         <form method="post" action="{url_for('send_now')}"><button>Send now</button></form>
         <h3>Current conditions</h3>
         <table>{rows}</table>

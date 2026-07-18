@@ -12,8 +12,8 @@ from datetime import datetime, timezone as dt_timezone
 from zoneinfo import ZoneInfo
 
 from . import calibrate, clientraw, tide
-from .davis_decode import decode_packet, is_valid_packet
-from .source_rtldavis import RtldavisSource
+from .davis_decode import decode_packet, is_valid_packet, is_valid_repeated_packet
+from .source_rtldavis import ReceivedPacket, RtldavisSource
 from .state import StationState
 from .uploaders import ReconnectingUploader
 from .webui import run_webui
@@ -52,6 +52,8 @@ class Application:
         self._service_state = {
             "running_state": "starting",
             "last_packet_time": None,
+            "last_packet_repeated": None,
+            "last_freq_corr_hz": None,
             "packets_per_min": 0,
             "uploads": {},
             "current": {},
@@ -71,13 +73,24 @@ class Application:
     # ------------------------------------------------------------------
     # Packet handling
     # ------------------------------------------------------------------
-    def _handle_packet(self, packet: list[int]) -> None:
-        if not is_valid_packet(packet):
-            logger.debug("dropped packet with bad CRC: %02X", bytes(packet))
+    def _handle_packet(self, received: ReceivedPacket) -> None:
+        if received.repeated:
+            # Repeater-relayed packets use a different CRC than the classic
+            # direct-from-ISS formula -- see davis_decode.is_valid_repeated_packet.
+            if received.repeater_info is None or not is_valid_repeated_packet(
+                received.data, received.repeater_info
+            ):
+                logger.debug(
+                    "dropped repeater packet with bad CRC: %02X info=%s",
+                    bytes(received.data), received.repeater_info,
+                )
+                return
+        elif not is_valid_packet(received.data):
+            logger.debug("dropped packet with bad CRC: %02X", bytes(received.data))
             return
 
         expected_id = self.config["station"].get("transmitter_id")
-        decoded = decode_packet(packet)
+        decoded = decode_packet(received.data)
         if expected_id is not None and decoded.transmitter_id != expected_id:
             return
 
@@ -115,6 +128,8 @@ class Application:
         with self._lock:
             self._service_state["last_packet_time"] = datetime.now(dt_timezone.utc).isoformat()
             self._service_state["packets_per_min"] = len(self._packet_times)
+            self._service_state["last_packet_repeated"] = received.repeated
+            self._service_state["last_freq_corr_hz"] = received.freq_corr_hz
 
     def _read_bme280_pressure(self) -> float | None:
         try:
