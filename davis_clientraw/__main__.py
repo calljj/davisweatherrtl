@@ -53,6 +53,7 @@ class Application:
             "running_state": "starting",
             "last_packet_time": None,
             "last_packet_repeated": None,
+            "last_freq_corr_hz": None,
             "packets_per_min": 0,
             "uploads": {},
             "current": {},
@@ -128,6 +129,7 @@ class Application:
             self._service_state["last_packet_time"] = datetime.now(dt_timezone.utc).isoformat()
             self._service_state["packets_per_min"] = len(self._packet_times)
             self._service_state["last_packet_repeated"] = received.repeated
+            self._service_state["last_freq_corr_hz"] = received.freq_corr_hz
 
     def _read_bme280_pressure(self) -> float | None:
         try:

@@ -444,13 +444,13 @@ func main() {
                         chLastHops[msgIdToChan[int(msg.ID)]] = p.HopToSeq(actHopChanIdx)
                         chLastVisits[msgIdToChan[int(msg.ID)]] = curTime
                         if *undefined {
-                            log.Printf("%02X %d %d %d %d %d msg.ID=%d undefined:%d Repeated=%v RepeaterInfo=%02X Hypothesis=%s",
-                                msg.Data, chTotMsgs[0], chTotMsgs[1], chTotMsgs[2], chTotMsgs[3], totInit, msg.ID, idUndefs, msg.Repeated, msg.RepeaterInfo, msg.MatchedHypothesis)
+                            log.Printf("%02X %d %d %d %d %d msg.ID=%d undefined:%d Repeated=%v RepeaterInfo=%02X Hypothesis=%s FreqCorr=%d",
+                                msg.Data, chTotMsgs[0], chTotMsgs[1], chTotMsgs[2], chTotMsgs[3], totInit, msg.ID, idUndefs, msg.Repeated, msg.RepeaterInfo, msg.MatchedHypothesis, freqCorr)
                         } else if graphiteSrv != nil {
                             graphiteChan <- protocol.DecodeMsg(msg)
 												} else {
-                            log.Printf("%02X %d %d %d %d %d msg.ID=%d Repeated=%v RepeaterInfo=%02X Hypothesis=%s",
-                                msg.Data, chTotMsgs[0], chTotMsgs[1], chTotMsgs[2], chTotMsgs[3], totInit, msg.ID, msg.Repeated, msg.RepeaterInfo, msg.MatchedHypothesis)
+                            log.Printf("%02X %d %d %d %d %d msg.ID=%d Repeated=%v RepeaterInfo=%02X Hypothesis=%s FreqCorr=%d",
+                                msg.Data, chTotMsgs[0], chTotMsgs[1], chTotMsgs[2], chTotMsgs[3], totInit, msg.ID, msg.Repeated, msg.RepeaterInfo, msg.MatchedHypothesis, freqCorr)
                         }
                         handleNxtPacket = true
                     }

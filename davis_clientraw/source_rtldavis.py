@@ -8,18 +8,23 @@ output -- diagnostics and data packets alike -- goes to stderr, not stdout
 on this Pi). A received Davis packet is logged as:
 
     HH:MM:SS.ffffff <16 hex chars = 8 raw packet bytes> <counters...> msg.ID=<N> \
-        [undefined:[...]] Repeated=<true|false> RepeaterInfo=<0 or 4 hex chars> Hypothesis=<name>
+        [undefined:[...]] Repeated=<true|false> RepeaterInfo=<0 or 4 hex chars> \
+        Hypothesis=<name> FreqCorr=<signed Hz>
 
-e.g. "11:23:45.123456 8004700F990091AB 12 34 56 78 9 msg.ID=1 Repeated=false RepeaterInfo=[] Hypothesis="
+e.g. "11:23:45.123456 8004700F990091AB 12 34 56 78 9 msg.ID=1 Repeated=false RepeaterInfo=[] Hypothesis= FreqCorr=-140"
 or, for a repeater-relayed packet:
-"11:23:45.123456 8108812DD9001572 2 0 0 0 0 msg.ID=1 Repeated=true RepeaterInfo=8501 Hypothesis=reorder_crc_last_with_header"
+"11:23:45.123456 8108812DD9001572 2 0 0 0 0 msg.ID=1 Repeated=true RepeaterInfo=8501 Hypothesis=reorder_crc_last_with_header FreqCorr=-140"
 
-The Repeated/RepeaterInfo/Hypothesis suffix is this project's own addition
-(see vendor/rtldavis/protocol/protocol.go) -- upstream rtldavis doesn't have
-it, so the regex treats it as optional to stay compatible with plain builds.
+The Repeated/RepeaterInfo/Hypothesis/FreqCorr suffix is this project's own
+addition (see vendor/rtldavis/protocol/protocol.go and main.go) -- upstream
+rtldavis doesn't have it, so the regex treats it as optional to stay
+compatible with plain builds. FreqCorr is the AFC correction (in Hz) that
+was applied to the tuner for the hop that produced this packet -- a running
+per-transmitter-per-channel weighted average of past frequency errors (see
+protocol.go's SetHop()), not something newly computed by this project.
 
 RtldavisSource spawns the binary with stderr merged into stdout and matches
-that line shape to extract the 8 raw packet bytes plus repeater metadata.
+that line shape to extract the 8 raw packet bytes plus repeater/AFC metadata.
 """
 from __future__ import annotations
 
@@ -43,6 +48,7 @@ DATA_LINE_RE = re.compile(
     r"(?:\s+Repeated=(true|false)"   # group 2: repeated flag
     r"\s+RepeaterInfo=([0-9A-Fa-f]*)"  # group 3: 0 or 4 hex chars
     r"\s+Hypothesis=(\S*))?"          # group 4: hypothesis name, may be empty
+    r"(?:\s+FreqCorr=(-?\d+))?"       # group 5: AFC correction in Hz, may be absent
 )
 
 
@@ -59,6 +65,10 @@ class ReceivedPacket:
     data: list[int]
     repeated: bool = False
     repeater_info: Optional[list[int]] = field(default=None)
+    # AFC correction (Hz) rtldavis applied for the hop that produced this
+    # packet. None if the running binary predates this project's FreqCorr
+    # logging addition.
+    freq_corr_hz: Optional[int] = field(default=None)
 
 
 class PacketSource(ABC):
@@ -164,7 +174,7 @@ class RtldavisSource(PacketSource):
                     logger.debug("rtldavis (non-data): %s", line)
                 continue
 
-            data_hex, repeated_str, repeater_info_hex, hypothesis = match.groups()
+            data_hex, repeated_str, repeater_info_hex, hypothesis, freq_corr_str = match.groups()
             data = [int(data_hex[i:i+2], 16) for i in range(0, 16, 2)]
             repeated = repeated_str == "true"
             repeater_info = None
@@ -176,7 +186,13 @@ class RtldavisSource(PacketSource):
                     "repeater-relayed packet, hypothesis=%s repeater_info=%s",
                     hypothesis, repeater_info,
                 )
-            yield ReceivedPacket(data=data, repeated=repeated, repeater_info=repeater_info)
+            freq_corr_hz = int(freq_corr_str) if freq_corr_str is not None else None
+            yield ReceivedPacket(
+                data=data,
+                repeated=repeated,
+                repeater_info=repeater_info,
+                freq_corr_hz=freq_corr_hz,
+            )
 
     def stop(self) -> None:
         self._stop_requested = True
