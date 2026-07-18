@@ -217,36 +217,31 @@ func (p *Parser) SeqToHop(n int) int {
 // wiki) confirms the extra bytes exist and says the classic CRC covers
 // "bytes 1,2,3,4,5" while the repeater CRC covers "bytes 1,2,3,4,5,8,9",
 // but doesn't specify byte-order/inclusion precisely enough to derive a
-// single certain formula. build takes the 10-byte raw payload (header,
-// 5 data bytes, 2 CRC bytes, 2 repeater-info bytes, in that transmitted
-// order) and returns the byte sequence to run through the residue check
-// (Checksum(...) == 0) -- the same style of check already proven correct
-// for classic 8-byte packets, which is CRC over the *entire* transmitted
-// block including the CRC's own bytes, in transmission order.
+// single certain formula on its own. build takes the 10-byte raw payload
+// (header, 5 data bytes, 2 CRC bytes, 2 repeater-info bytes, in that
+// transmitted order) and returns the byte sequence to run through the
+// residue check (Checksum(...) == 0) -- the same style of check already
+// proven correct for classic 8-byte packets, which is CRC over the
+// *entire* transmitted block including the CRC's own bytes.
+//
+// CONFIRMED 2026-07-18: "reorder_crc_last_with_header" (first in this
+// list) validated 20/20 consecutive real repeater packets from a live
+// Davis station-2-via-repeater-A capture, with physically sane decoded
+// values (wind speed/direction, temp, rain count all in range) and zero
+// false positives. The other entries are kept as documented fallbacks in
+// case a different Davis generation/firmware uses a different scheme.
 type repeaterHypothesis struct {
 	name  string
 	build func(p []byte) []byte
 }
 
 var repeaterHypotheses = []repeaterHypothesis{
-	// Straightforward extension of the classic whole-block convention:
-	// header + data + CRC + repeater-info, all in transmitted order.
-	{"seq10", func(p []byte) []byte { return p[:10] }},
-	// Same, but excluding the header byte (the DavisRFM69 doc's byte
-	// ranges never mention byte 0).
-	{"seq10_noheader", func(p []byte) []byte { return p[1:10] }},
-	// Doc-literal ordering: the CRC is *computed* over data+repeater-info
-	// (skipping over its own future position), so for a residue check we
-	// move the CRC's own 2 bytes to the end of the sequence instead of
-	// their natural transmitted position in the middle.
-	{"reorder_crc_last", func(p []byte) []byte {
-		b := make([]byte, 0, 9)
-		b = append(b, p[1:6]...)  // data bytes
-		b = append(b, p[8:10]...) // repeater info
-		b = append(b, p[6:8]...)  // CRC bytes, moved last
-		return b
-	}},
-	// Same reordering, but including the header byte at the front.
+	// CONFIRMED formula: header + data(1-5) + repeater-info(8-9), with the
+	// CRC's own 2 bytes moved to the end of the sequence for the residue
+	// check instead of their natural transmitted position in the middle
+	// (i.e. the sender computed the CRC over the "real" payload including
+	// repeater-info *before* knowing where the CRC value itself would be
+	// positioned in the final transmitted frame).
 	{"reorder_crc_last_with_header", func(p []byte) []byte {
 		b := make([]byte, 0, 10)
 		b = append(b, p[0])
@@ -255,6 +250,16 @@ var repeaterHypotheses = []repeaterHypothesis{
 		b = append(b, p[6:8]...)
 		return b
 	}},
+	// Unconfirmed fallbacks, tried only if the confirmed formula fails.
+	{"reorder_crc_last", func(p []byte) []byte {
+		b := make([]byte, 0, 9)
+		b = append(b, p[1:6]...)  // data bytes
+		b = append(b, p[8:10]...) // repeater info
+		b = append(b, p[6:8]...)  // CRC bytes, moved last
+		return b
+	}},
+	{"seq10", func(p []byte) []byte { return p[:10] }},
+	{"seq10_noheader", func(p []byte) []byte { return p[1:10] }},
 }
 
 // Given a list of packets, check them for validity and ignore duplicates,

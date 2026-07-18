@@ -396,7 +396,7 @@ func main() {
                 if testFreq {
                     if testNumber > 0 {
                         if msgIdToChan[int(msg.ID)] != 9 {
-                            log.Printf("TESTFREQ %d: Frequency %d (freqCorr=%d): OK, msg.data: %02X", testNumber, testChannelFreq, freqCorr, msg.Data)
+                            log.Printf("TESTFREQ %d: Frequency %d (freqCorr=%d): OK, msg.data: %02X ID=%d Repeated=%v RepeaterInfo=%02X Hypothesis=%s", testNumber, testChannelFreq, freqCorr, msg.Data, msg.ID, msg.Repeated, msg.RepeaterInfo, msg.MatchedHypothesis)
                             loopPeriod = time.Duration(maxFreq + 2) * idLoopPeriods[actChan[maxChan-1]]
                             loopTimer = time.After(loopPeriod)
                             nextHop <- p.SetHop(0, 0)
