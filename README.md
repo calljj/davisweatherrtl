@@ -117,18 +117,17 @@ than frequency calibration -- confirm signal is actually present with
 result for periodic (~2.5s) bursts near the 5 nominal channels before
 assuming a wider search range will help.
 
-## Wireless repeater support (this branch only, experimental)
+## Wireless repeater support
 
-**This is on the `repeater-decode` branch, not `master` -- it's not merged
-into the main product yet.** Status: the core decode is confirmed working
-against live traffic; one detail (what the repeater-info bytes actually
-mean) is still unsolved.
+Status: the core decode is confirmed working against live traffic; one
+detail (what the repeater-info bytes actually mean) is still unsolved --
+see below.
 
 Davis's classic 8-byte packet format and CRC only describe direct
 ISS-to-console transmissions. A repeater relaying that data adds 2 extra
 bytes to the over-the-air frame and folds them into a *different* CRC
 formula -- a receiver that only implements the classic formula (as this
-project did before this branch) will never validate a repeater-relayed
+project did before this feature) will never validate a repeater-relayed
 packet, silently, with no error logged. This isn't documented anywhere by
 Davis; the closest public reference is the DavisRFM69 project's wiki, which
 confirms the extra bytes exist but not how they fold into the CRC.
@@ -151,15 +150,17 @@ exceptions) they correlate deterministically with the packet's
 another, in one capture). What they actually encode -- and whether that
 holds across different repeaters/firmware -- is open.
 
-What's wired up end-to-end on this branch: `rtldavis` captures a wider
-window (96 symbols instead of 80, to actually see the extra bytes) and
-tries the confirmed CRC formula (plus a few unconfirmed fallbacks) on
-anything that fails the classic check; `source_rtldavis.py` parses the
-extra `Repeated=`/`RepeaterInfo=` fields from its log output;
+What's wired up end-to-end: `rtldavis` captures a wider window (96 symbols
+instead of 80, to actually see the extra bytes) and tries the confirmed CRC
+formula (plus a few unconfirmed fallbacks) on anything that fails the
+classic check; `source_rtldavis.py` parses the extra
+`Repeated=`/`RepeaterInfo=` fields from its log output;
 `davis_decode.is_valid_repeated_packet` independently re-verifies in
 Python; `__main__.py` accepts repeater packets into the same
 `clientraw*.txt` pipeline as direct ones; the status page shows "via
-repeater" when the most recent packet arrived that way.
+repeater" when the most recent packet arrived that way, plus the current
+AFC frequency correction (`rtldavis`'s own running per-transmitter drift
+compensation, now surfaced instead of silently applied).
 
 ## What the ISS provides vs. console-only
 
