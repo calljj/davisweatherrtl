@@ -26,6 +26,7 @@ PAGE_SHELL = """
   td, th { border: 1px solid #ccc; padding: 0.3em 0.6em; text-align: left; }
   pre { background: #f4f4f4; padding: 1em; overflow-x: auto; }
   .ok { color: green; } .fail { color: #b00; }
+  .warn { color: #8a6100; background: #fff8e1; border: 1px solid #e0c260; padding: 0.6em 0.8em; border-radius: 4px; }
   button { padding: 0.5em 1em; margin-top: 0.5em; cursor: pointer; }
 </style>
 </head>
@@ -104,7 +105,14 @@ def create_app(
             cfg["rain_bucket_mm"] = float(form.get("rain_bucket_mm", cfg["rain_bucket_mm"]))
 
             cfg["rtldavis"]["bin"] = form.get("rtldavis_bin", cfg["rtldavis"]["bin"])
-            cfg["rtldavis"]["region"] = form.get("rtldavis_region", cfg["rtldavis"]["region"])
+            # Simple EU/US toggle for the common case. NZ is left alone if
+            # already set -- it's only reachable by editing config.json
+            # directly, since it's untested by this project and has no
+            # calibration-UI support (see /calibrate below).
+            if "rtldavis_use_us" in form:
+                cfg["rtldavis"]["region"] = "US"
+            elif cfg["rtldavis"]["region"] != "NZ":
+                cfg["rtldavis"]["region"] = "EU"
             cfg["rtldavis"]["ppm"] = int(form.get("rtldavis_ppm", cfg["rtldavis"]["ppm"]))
             cfg["rtldavis"]["maxmissed"] = int(
                 form.get("rtldavis_maxmissed", cfg["rtldavis"].get("maxmissed", 4))
@@ -183,12 +191,21 @@ def create_app(
         <fieldset>
         <legend>rtldavis (RTL-SDR)</legend>
         <label>Binary path</label><input name="rtldavis_bin" value="{{c.rtldavis.bin}}">
-        <label>Region</label>
-        <select name="rtldavis_region">
-          {% for r in ['EU','US','NZ'] %}
-          <option value="{{r}}" {{'selected' if c.rtldavis.region==r else ''}}>{{r}}</option>
-          {% endfor %}
-        </select>
+        <label><input type="checkbox" name="rtldavis_use_us" {{'checked' if c.rtldavis.region=='US' else ''}} style="width:auto">
+          Use US frequencies (default: EU)</label>
+        {% if c.rtldavis.region == 'US' %}
+        <p class="warn">US mode is untested by this project. It uses a very different
+        reception strategy than EU: 51 channels with a pseudo-random frequency-hopping
+        pattern (vs. EU's fixed 5 channels), relying on <code>rtldavis</code>'s built-in
+        AFC to track drift rather than the manual baseline this project's
+        <a href="{{ url_for('calibrate_page') }}">/calibrate</a> tool measures -- that
+        tool and the live channel table on <a href="{{ url_for('status_page') }}">/status</a>
+        are both EU-specific and won't reflect anything meaningful here.</p>
+        {% elif c.rtldavis.region == 'NZ' %}
+        <p class="warn">Region is currently NZ (set outside this checkbox, via config.json).
+        Untested by this project; same caveats as US mode above. Ticking/unticking the US
+        box above will switch this to US/EU respectively.</p>
+        {% endif %}
         <label>PPM correction</label><input name="rtldavis_ppm" value="{{c.rtldavis.ppm}}">
         <label>Max missed packets before resync</label>
         <input name="rtldavis_maxmissed" value="{{c.rtldavis.maxmissed}}">
@@ -308,17 +325,26 @@ def create_app(
         afc_hz = state.get("last_freq_corr_hz")
         afc_html = f"{afc_hz:+d} Hz" if afc_hz is not None else "unknown"
 
-        channels = get_current_channels()
-        if channels:
-            channels_html = ", ".join(f"{c} Hz" for c in channels)
+        region = load_config()["rtldavis"].get("region", "EU")
+        if region != "EU":
+            channels_label = f"{region} channel frequencies"
+            channels_html = (
+                f"n/a -- {region} mode uses a 51-channel hop pattern with rtldavis's own "
+                f"AFC, not the fixed 5-channel table /calibrate manages"
+            )
         else:
-            channels_html = '<span class="fail">unknown (could not read protocol.go)</span>'
+            channels_label = "EU channel frequencies"
+            channels = get_current_channels()
+            if channels:
+                channels_html = ", ".join(f"{c} Hz" for c in channels)
+            else:
+                channels_html = '<span class="fail">unknown (could not read protocol.go)</span>'
 
         body = f"""
         <h2>Status: {state.get('running_state', 'unknown')}</h2>
         <p style="font-size:1.2em"><span style="color:{signal_color}">{signal_dot}</span> {signal_text}</p>
         <p>Packets/min: {state.get('packets_per_min', 0)}</p>
-        <p>EU channel frequencies: {channels_html} &nbsp; <a href="{url_for('calibrate_page')}">(recalibrate)</a></p>
+        <p>{channels_label}: {channels_html} &nbsp; <a href="{url_for('calibrate_page')}">(recalibrate)</a></p>
         <p>AFC correction (last packet): {afc_html}</p>
         <form method="post" action="{url_for('send_now')}"><button>Send now</button></form>
         <h3>Current conditions</h3>
@@ -368,6 +394,12 @@ def create_app(
     def calibrate_page():
         body = """
         <h2>Frequency calibration</h2>
+        {% if region != 'EU' %}
+        <p class="warn">Region is currently {{ region }}, but this tool and the table it
+        writes are EU-specific (a fixed 5-channel table). It won't help in {{ region }}
+        mode, which uses a 51-channel hop pattern and relies on <code>rtldavis</code>'s
+        own AFC instead -- see the note on <a href="{{ url_for('config_page') }}">/config</a>.</p>
+        {% endif %}
         <p>Sweeps a narrow band around the nominal Channel 1 frequency looking for a
         decodable signal, dwelling ~17-21s per test point. The sweep stops early if it
         hits an exact <code>freqCorr=0</code> (as precisely centered as this tool can
@@ -495,6 +527,7 @@ def create_app(
                 spacing=_calibrate.CHANNEL_SPACING_HZ,
                 count=_calibrate.CHANNEL_COUNT,
                 current_gain=load_config()["rtldavis"].get("gain", 0),
+                region=load_config()["rtldavis"].get("region", "EU"),
             )
         )
 
