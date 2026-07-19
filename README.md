@@ -61,10 +61,8 @@ expected on a fresh install -- go straight to
   RTL-SDR Blog V4 (R828D) -- both work identically once `librtlsdr` is built
   correctly (see below).
 - A Davis Vantage Pro2 (or compatible) ISS. Defaults to the EU 868MHz band;
-  a "Use US frequencies" checkbox on `/config` switches to the US 915MHz
-  table (an NZ table also exists in the vendored `rtldavis` source, reachable
-  only by setting `rtldavis.region: "NZ"` directly in `config.json`). US and
-  NZ are both **untested by this project** and work quite differently from
+  the Region dropdown on `/config` also offers US (915MHz) and NZ. Both US
+  and NZ are **untested by this project** and work quite differently from
   EU: 51 channels with a pseudo-random hop pattern instead of EU's fixed 5,
   relying entirely on `rtldavis`'s own AFC to track drift. The `/calibrate`
   tool and the live channel table on `/status` are both EU-specific and

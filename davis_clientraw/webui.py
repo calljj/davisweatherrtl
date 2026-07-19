@@ -105,14 +105,7 @@ def create_app(
             cfg["rain_bucket_mm"] = float(form.get("rain_bucket_mm", cfg["rain_bucket_mm"]))
 
             cfg["rtldavis"]["bin"] = form.get("rtldavis_bin", cfg["rtldavis"]["bin"])
-            # Simple EU/US toggle for the common case. NZ is left alone if
-            # already set -- it's only reachable by editing config.json
-            # directly, since it's untested by this project and has no
-            # calibration-UI support (see /calibrate below).
-            if "rtldavis_use_us" in form:
-                cfg["rtldavis"]["region"] = "US"
-            elif cfg["rtldavis"]["region"] != "NZ":
-                cfg["rtldavis"]["region"] = "EU"
+            cfg["rtldavis"]["region"] = form.get("rtldavis_region", cfg["rtldavis"]["region"])
             cfg["rtldavis"]["ppm"] = int(form.get("rtldavis_ppm", cfg["rtldavis"]["ppm"]))
             cfg["rtldavis"]["maxmissed"] = int(
                 form.get("rtldavis_maxmissed", cfg["rtldavis"].get("maxmissed", 4))
@@ -191,20 +184,21 @@ def create_app(
         <fieldset>
         <legend>rtldavis (RTL-SDR)</legend>
         <label>Binary path</label><input name="rtldavis_bin" value="{{c.rtldavis.bin}}">
-        <label><input type="checkbox" name="rtldavis_use_us" {{'checked' if c.rtldavis.region=='US' else ''}} style="width:auto">
-          Use US frequencies (default: EU)</label>
-        {% if c.rtldavis.region == 'US' %}
-        <p class="warn">US mode is untested by this project. It uses a very different
-        reception strategy than EU: 51 channels with a pseudo-random frequency-hopping
-        pattern (vs. EU's fixed 5 channels), relying on <code>rtldavis</code>'s built-in
-        AFC to track drift rather than the manual baseline this project's
-        <a href="{{ url_for('calibrate_page') }}">/calibrate</a> tool measures -- that
-        tool and the live channel table on <a href="{{ url_for('status_page') }}">/status</a>
-        are both EU-specific and won't reflect anything meaningful here.</p>
-        {% elif c.rtldavis.region == 'NZ' %}
-        <p class="warn">Region is currently NZ (set outside this checkbox, via config.json).
-        Untested by this project; same caveats as US mode above. Ticking/unticking the US
-        box above will switch this to US/EU respectively.</p>
+        <label>Region</label>
+        <select name="rtldavis_region">
+          {% for r in ['EU','US','NZ'] %}
+          <option value="{{r}}" {{'selected' if c.rtldavis.region==r else ''}}>{{r}}</option>
+          {% endfor %}
+        </select>
+        {% if c.rtldavis.region != 'EU' %}
+        <p class="warn">{{ c.rtldavis.region }} mode is untested by this project. It uses a
+        very different reception strategy than EU: 51 channels with a pseudo-random
+        frequency-hopping pattern (vs. EU's fixed 5 channels), relying on
+        <code>rtldavis</code>'s built-in AFC to track drift rather than the manual baseline
+        this project's <a href="{{ url_for('calibrate_page') }}">/calibrate</a> tool
+        measures -- that tool and the live channel table on
+        <a href="{{ url_for('status_page') }}">/status</a> are both EU-specific and won't
+        reflect anything meaningful here.</p>
         {% endif %}
         <label>PPM correction</label><input name="rtldavis_ppm" value="{{c.rtldavis.ppm}}">
         <label>Max missed packets before resync</label>
