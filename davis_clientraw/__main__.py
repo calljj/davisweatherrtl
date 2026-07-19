@@ -373,15 +373,20 @@ class Application:
         self._calibrator.start(startfreq, endfreq, stepfreq)
 
     def get_current_channels(self) -> list[int] | None:
-        """Whatever EU channel frequencies are actually baked into the
-        currently-built rtldavis binary, read straight from its source of
-        truth (protocol.go) -- not from config.json, which doesn't track
-        this at all."""
+        """Whatever channel frequencies are actually baked into the
+        currently-built rtldavis binary for the configured region, read
+        straight from its source of truth (protocol.go) -- not from
+        config.json, which doesn't track this at all. NZ has no
+        calibration-UI support, so returns None there (same as any other
+        read failure)."""
+        region = self.config["rtldavis"].get("region", "EU")
         source_dir = self.config["rtldavis"].get("source_dir")
-        if not source_dir:
+        if not source_dir or region not in ("EU", "US"):
             return None
         protocol_go_path = os.path.join(source_dir, "protocol", "protocol.go")
         try:
+            if region == "US":
+                return calibrate.read_us_protocol_go_channels(protocol_go_path)
             return calibrate.read_protocol_go_channels(protocol_go_path)
         except Exception:
             logger.exception("failed to read current channel table")
@@ -404,17 +409,29 @@ class Application:
         """Writes the derived channel table into rtldavis's Go source,
         rebuilds it in place at the configured bin path (no sudo needed --
         that path lives under the project directory, not /usr/local/bin),
-        and resumes normal packet reception either way."""
+        and resumes normal packet reception either way. Which region's
+        block gets written is decided by the configured rtldavis.region --
+        NZ is rejected outright rather than falling through to the EU
+        writer, since a channel count for the wrong region would otherwise
+        silently corrupt the EU table (EU_CHANNELS_RE matches regardless of
+        how many values it's given)."""
         rtldavis_cfg = self.config["rtldavis"]
+        region = rtldavis_cfg.get("region", "EU")
         source_dir = rtldavis_cfg.get("source_dir")
         gopath = rtldavis_cfg.get("gopath")
         if not source_dir or not gopath:
             self._reception_paused.clear()
             return False, "config.json rtldavis.source_dir / gopath is not set"
+        if region not in ("EU", "US"):
+            self._reception_paused.clear()
+            return False, f"calibration is not supported for region {region!r}"
 
         protocol_go_path = os.path.join(source_dir, "protocol", "protocol.go")
         try:
-            calibrate.write_protocol_go(protocol_go_path, channels, comment)
+            if region == "US":
+                calibrate.write_us_protocol_go(protocol_go_path, channels, comment)
+            else:
+                calibrate.write_protocol_go(protocol_go_path, channels, comment)
         except Exception as exc:
             self._reception_paused.clear()
             return False, f"failed to write protocol.go: {exc}"

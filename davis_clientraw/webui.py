@@ -190,15 +190,18 @@ def create_app(
           <option value="{{r}}" {{'selected' if c.rtldavis.region==r else ''}}>{{r}}</option>
           {% endfor %}
         </select>
-        {% if c.rtldavis.region != 'EU' %}
-        <p class="warn">{{ c.rtldavis.region }} mode is untested by this project. It uses a
-        very different reception strategy than EU: 51 channels with a pseudo-random
-        frequency-hopping pattern (vs. EU's fixed 5 channels), relying on
-        <code>rtldavis</code>'s built-in AFC to track drift rather than the manual baseline
-        this project's <a href="{{ url_for('calibrate_page') }}">/calibrate</a> tool
-        measures -- that tool and the live channel table on
-        <a href="{{ url_for('status_page') }}">/status</a> are both EU-specific and won't
-        reflect anything meaningful here.</p>
+        {% if c.rtldavis.region == 'US' %}
+        <p class="warn">US mode is untested by this project (no US hardware to verify
+        against). It uses a different reception strategy than EU: 51 channels with a
+        pseudo-random frequency-hopping pattern instead of EU's fixed 5, relying on
+        <code>rtldavis</code>'s built-in AFC to track drift. <a href="{{ url_for('calibrate_page') }}">/calibrate</a>
+        does support US (a measured offset is applied across all 51 nominal channels),
+        but that derivation itself is unverified against real US hardware too.</p>
+        {% elif c.rtldavis.region == 'NZ' %}
+        <p class="warn">NZ mode is untested by this project and has no
+        <a href="{{ url_for('calibrate_page') }}">/calibrate</a> support at all (its 51
+        channels aren't evenly spaced, so EU/US's calibration approach doesn't apply
+        as-is) -- only reachable by editing config.json directly, as you've done here.</p>
         {% endif %}
         <label>PPM correction</label><input name="rtldavis_ppm" value="{{c.rtldavis.ppm}}">
         <label>Max missed packets before resync</label>
@@ -320,17 +323,19 @@ def create_app(
         afc_html = f"{afc_hz:+d} Hz" if afc_hz is not None else "unknown"
 
         region = load_config()["rtldavis"].get("region", "EU")
-        if region != "EU":
+        if region not in ("EU", "US"):
             channels_label = f"{region} channel frequencies"
             channels_html = (
                 f"n/a -- {region} mode uses a 51-channel hop pattern with rtldavis's own "
-                f"AFC, not the fixed 5-channel table /calibrate manages"
+                f"AFC, not the fixed-table calibration /calibrate manages"
             )
         else:
-            channels_label = "EU channel frequencies"
+            channels_label = f"{region} channel frequencies"
             channels = get_current_channels()
             if channels:
                 channels_html = ", ".join(f"{c} Hz" for c in channels)
+                if region == "US":
+                    channels_html = f"{len(channels)} channels, {channels[0]}-{channels[-1]} Hz"
             else:
                 channels_html = '<span class="fail">unknown (could not read protocol.go)</span>'
 
@@ -387,26 +392,28 @@ def create_app(
     @app.route("/calibrate")
     def calibrate_page():
         body = """
-        <h2>Frequency calibration</h2>
-        {% if region != 'EU' %}
-        <p class="warn">Region is currently {{ region }}, but this tool and the table it
-        writes are EU-specific (a fixed 5-channel table). It won't help in {{ region }}
-        mode, which uses a 51-channel hop pattern and relies on <code>rtldavis</code>'s
-        own AFC instead -- see the note on <a href="{{ url_for('config_page') }}">/config</a>.</p>
+        <h2>Frequency calibration ({{ region }})</h2>
+        {% if region not in ('EU', 'US') %}
+        <p class="warn">Region is currently {{ region }}, and this tool only supports
+        EU and US. {{ region }} mode uses a 51-channel hop pattern and relies on
+        <code>rtldavis</code>'s own AFC instead -- see the note on
+        <a href="{{ url_for('config_page') }}">/config</a>.</p>
         {% endif %}
         <p>Sweeps a narrow band around the nominal Channel 1 frequency looking for a
         decodable signal, dwelling ~17-21s per test point. The sweep stops early if it
         hits an exact <code>freqCorr=0</code> (as precisely centered as this tool can
         measure) -- otherwise it runs the full range and <strong>you</strong> pick which
-        OK hit to use as the Channel 1 baseline below; the other 4 EU channels are then
-        derived from it using Davis's fixed 120kHz channel spacing.</p>
+        OK hit to use as the Channel 1 baseline below; the other {{ count - 1 }} {{ region }}
+        channels are then derived from it{% if region == 'EU' %} using Davis's fixed
+        120kHz channel spacing{% else %} by applying that same measured offset to each of
+        the nominal {{ region }} channel frequencies{% endif %}.</p>
         <p><strong>This pauses normal packet reception for the duration of the sweep</strong>
         -- the RTL-SDR can only be used by one process at a time.</p>
 
         <fieldset>
         <legend>Sweep range (Hz)</legend>
-        <label>Start frequency</label><input id="startfreq" value="868100000">
-        <label>End frequency</label><input id="endfreq" value="868140000">
+        <label>Start frequency</label><input id="startfreq" value="{{ default_startfreq }}">
+        <label>End frequency</label><input id="endfreq" value="{{ default_endfreq }}">
         <label>Step</label><input id="stepfreq" value="1000">
         <label>Gain (tenths of dB; 0 = AGC/auto)</label>
         <input id="gain" value="{{ current_gain }}">
@@ -430,10 +437,20 @@ def create_app(
         </fieldset>
 
         <script>
+        const REGION = {{ region|tojson }};
         const SPACING = {{ spacing }};
         const COUNT = {{ count }};
+        const NOMINAL = {{ nominal_channels|tojson }};
 
         function deriveChannels(base) {
+            // EU: fixed 120kHz spacing from the measured Channel 1. US: apply
+            // that same measured offset (base - nominal Channel 1) to every
+            // nominal channel -- see us_offset_to_channels() in calibrate.py
+            // for why a single offset is physically valid here too.
+            if (REGION === 'US') {
+                const offset = base - NOMINAL[0];
+                return NOMINAL.map(f => f + offset);
+            }
             const chans = [];
             for (let i = 0; i < COUNT; i++) { chans.push(base + i * SPACING); }
             return chans;
@@ -461,7 +478,7 @@ def create_app(
             document.getElementById('channels-field').value = deriveChannels(base).join(',');
             if (!document.getElementById('comment').value) {
                 document.getElementById('comment').value =
-                    'EU measured ' + new Date().toISOString().slice(0,10).replace(/-/g,'');
+                    REGION + ' measured ' + new Date().toISOString().slice(0,10).replace(/-/g,'');
             }
             return true;
         }
@@ -515,13 +532,29 @@ def create_app(
         """
         from . import calibrate as _calibrate
 
+        region = load_config()["rtldavis"].get("region", "EU")
+        if region == "US":
+            count = _calibrate.US_CHANNEL_COUNT
+            nominal_channels = _calibrate.US_NOMINAL_CHANNELS
+            # No prior measurements to bias toward for US (unlike EU's range
+            # below, chosen from this project's own observed drift) -- just a
+            # plain +-20kHz window around the nominal Channel 1 frequency.
+            default_startfreq, default_endfreq = 902400000, 902440000
+        else:
+            count = _calibrate.CHANNEL_COUNT
+            nominal_channels = []
+            default_startfreq, default_endfreq = 868100000, 868140000
+
         return render(
             render_template_string(
                 body,
                 spacing=_calibrate.CHANNEL_SPACING_HZ,
-                count=_calibrate.CHANNEL_COUNT,
+                count=count,
+                nominal_channels=nominal_channels,
+                default_startfreq=default_startfreq,
+                default_endfreq=default_endfreq,
                 current_gain=load_config()["rtldavis"].get("gain", 0),
-                region=load_config()["rtldavis"].get("region", "EU"),
+                region=region,
             )
         )
 

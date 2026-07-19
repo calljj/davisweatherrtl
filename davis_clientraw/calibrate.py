@@ -40,6 +40,33 @@ EU_CHANNELS_RE = re.compile(
     r'(\s*\})'
 )
 
+# US is a different reception model to EU: 51 channels in a pseudo-random hop
+# pattern instead of a fixed 5-channel table, so there's no fixed spacing to
+# derive the rest of the table from a single measured point the way EU's
+# CHANNEL_SPACING_HZ does. Instead: the nominal table below is the same one
+# baked into protocol.go, and calibration applies one uniform offset (the
+# measured Channel-0 error) across all 51 nominal values -- physically
+# equivalent to what EU's fixed-spacing math does, since a dongle's crystal
+# error is effectively constant across this narrow a band.
+US_NOMINAL_CHANNELS = [
+    902419338, 902921088, 903422839, 903924589, 904426340, 904928090,
+    905429841, 905931591, 906433342, 906935092, 907436843, 907938593,
+    908440344, 908942094, 909443845, 909945595, 910447346, 910949096,
+    911450847, 911952597, 912454348, 912956099, 913457849, 913959599,
+    914461350, 914963100, 915464850, 915966601, 916468351, 916970102,
+    917471852, 917973603, 918475353, 918977104, 919478854, 919980605,
+    920482355, 920984106, 921485856, 921987607, 922489357, 922991108,
+    923492858, 923994609, 924496359, 924998110, 925499860, 926001611,
+    926503361, 927005112, 927506862,
+]
+US_CHANNEL_COUNT = len(US_NOMINAL_CHANNELS)
+
+US_CHANNELS_RE = re.compile(
+    r'(// davis-clientraw-us-channels[^\n]*\n(?:[^\n]*\n)*?\s*)'
+    r'[0-9,\s]+,\s*//[^\n]*\n'
+    r'(\s*\})'
+)
+
 
 @dataclass
 class SweepPoint:
@@ -193,6 +220,53 @@ def read_protocol_go_channels(protocol_go_path: str) -> list[int]:
 
     freq_line = content[m.end(1):m.start(2)]
     return [int(n) for n in re.findall(r"\d+", freq_line.split("//")[0])]
+
+
+def write_us_protocol_go(protocol_go_path: str, channels: list[int], comment: str) -> None:
+    """Replaces the US channel table in protocol.go with the given
+    frequencies. Only touches the US block (marked by the
+    'davis-clientraw-us-channels' comment); EU/NZ tables are untouched.
+    Entirely separate from write_protocol_go/EU_CHANNELS_RE above -- by
+    design, so a bug here can't affect the already-proven EU path."""
+    if len(channels) != US_CHANNEL_COUNT:
+        raise ValueError(f"expected {US_CHANNEL_COUNT} US channels, got {len(channels)}")
+
+    with open(protocol_go_path) as f:
+        content = f.read()
+
+    freq_line = ", ".join(str(c) for c in channels) + f", // {comment}"
+    new_content, n = US_CHANNELS_RE.subn(rf"\g<1>{freq_line}\n\g<2>", content)
+    if n != 1:
+        raise ValueError(
+            f"expected exactly 1 match for the US channel table in {protocol_go_path}, found {n}"
+        )
+
+    tmp_path = protocol_go_path + ".tmp"
+    with open(tmp_path, "w") as f:
+        f.write(new_content)
+    os.replace(tmp_path, protocol_go_path)
+
+
+def read_us_protocol_go_channels(protocol_go_path: str) -> list[int]:
+    """Returns whatever US channel frequencies are currently baked into
+    protocol.go. Mirrors read_protocol_go_channels but for the US block."""
+    with open(protocol_go_path) as f:
+        content = f.read()
+
+    m = US_CHANNELS_RE.search(content)
+    if not m:
+        raise ValueError(f"could not find the US channel table in {protocol_go_path}")
+
+    freq_line = content[m.end(1):m.start(2)]
+    return [int(n) for n in re.findall(r"\d+", freq_line.split("//")[0])]
+
+
+def us_offset_to_channels(offset_hz: int) -> list[int]:
+    """Applies one uniform frequency offset (the measured error at nominal
+    Channel 0) across all 51 nominal US channels. See the US_NOMINAL_CHANNELS
+    comment above for why a single offset is physically valid here, same as
+    EU's fixed-spacing derivation."""
+    return [c + offset_hz for c in US_NOMINAL_CHANNELS]
 
 
 def rebuild(source_dir: str, bin_dest: str, gopath: str) -> tuple[bool, str]:
