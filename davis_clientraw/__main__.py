@@ -414,7 +414,19 @@ class Application:
         NZ is rejected outright rather than falling through to the EU
         writer, since a channel count for the wrong region would otherwise
         silently corrupt the EU table (EU_CHANNELS_RE matches regardless of
-        how many values it's given)."""
+        how many values it's given).
+
+        Explicitly pauses reception and stops the running rtldavis process
+        itself (not just the pause flag) -- this used to only work
+        correctly when called right after start_calibration_sweep, which
+        did that stop as a side effect. Called on its own (e.g. directly
+        via POST /calibrate/apply), the old process kept running the whole
+        time and the rebuilt binary silently never took effect until
+        something else happened to restart the service."""
+        self._reception_paused.set()
+        if self._source is not None:
+            self._source.stop()
+
         rtldavis_cfg = self.config["rtldavis"]
         region = rtldavis_cfg.get("region", "EU")
         source_dir = rtldavis_cfg.get("source_dir")
