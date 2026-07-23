@@ -14,6 +14,18 @@ class UploadError(Exception):
     pass
 
 
+# How often paramiko sends an SSH-level keepalive over an idle connection.
+# Without this, a connection that dies silently (e.g. a NAT/firewall drops
+# it without sending RST/FIN) can leave Transport's background read loop
+# blocked indefinitely on a socket that will never produce data again --
+# the socket-level timeout in connect_first_address() only covers the
+# initial connect, not paramiko's internal reads afterward, and paramiko is
+# known not to reliably surface a plain socket.timeout on those as a fatal
+# error. set_keepalive() operates at the SSH protocol layer instead, so a
+# dead connection gets detected and torn down rather than hanging forever.
+SSH_KEEPALIVE_SEC = 15
+
+
 def connect_first_address(host: str, port: int, timeout: float):
     """Connect to only the first DNS-resolved address, with a hard timeout.
 
@@ -75,6 +87,7 @@ class SftpUploader(Uploader):
             self._transport.connect(username=self.user, pkey=pkey)
         else:
             self._transport.connect(username=self.user, password=self.password)
+        self._transport.set_keepalive(SSH_KEEPALIVE_SEC)
         self._sftp = paramiko.SFTPClient.from_transport(self._transport)
 
     def put(self, local_path: str, remote_path: str) -> None:
@@ -121,6 +134,9 @@ class ScpUploader(Uploader):
         else:
             kwargs["password"] = self.password
         self._client.connect(self.host, **kwargs)
+        transport = self._client.get_transport()
+        if transport is not None:
+            transport.set_keepalive(SSH_KEEPALIVE_SEC)
 
     def put(self, local_path: str, remote_path: str) -> None:
         with open(local_path, "rb") as f:

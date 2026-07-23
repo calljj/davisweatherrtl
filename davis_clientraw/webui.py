@@ -44,6 +44,30 @@ PAGE_SHELL = """
 """
 
 
+def _upload_row_html(key: str, entry: dict, cfg: dict) -> str:
+    """Flags an upload as stale if it hasn't succeeded/failed recently
+    enough relative to its own configured interval -- catches an upload
+    worker thread hung inside a blocking call (e.g. a dead SFTP connection
+    that never raises), which otherwise looks identical to a healthy "ok"
+    forever, since the status/when fields simply stop being written rather
+    than turning into a visible error."""
+    status = entry.get("status")
+    when = entry.get("when")
+    if key == "tide":
+        interval_sec = cfg.get("tide", {}).get("interval_sec", 86400)
+    else:
+        interval_sec = cfg.get("files", {}).get(key, {}).get("interval_sec", 60)
+
+    if not when:
+        return f'<tr><td>{key}</td><td>{status}</td><td class="fail">never</td></tr>'
+
+    age_sec = (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(when)).total_seconds()
+    stale = age_sec > max(interval_sec * 5, 300)
+    css_class = "fail" if stale else "ok"
+    suffix = " (stale -- worker may be stuck)" if stale else ""
+    return f'<tr><td>{key}</td><td>{status}</td><td class="{css_class}">{when} ({age_sec:.0f}s ago){suffix}</td></tr>'
+
+
 def create_app(
     config_path: str,
     get_service_state,
@@ -298,12 +322,12 @@ def create_app(
         import datetime as dt
 
         state = get_service_state()
+        cfg = load_config()
         rows = "".join(
             f"<tr><td>{k}</td><td>{v}</td></tr>" for k, v in state.get("current", {}).items()
         )
         upload_rows = "".join(
-            f"<tr><td>{k}</td><td>{v.get('status')}</td><td>{v.get('when')}</td></tr>"
-            for k, v in state.get("uploads", {}).items()
+            _upload_row_html(k, v, cfg) for k, v in state.get("uploads", {}).items()
         )
 
         last_packet_time = state.get("last_packet_time")
