@@ -105,9 +105,9 @@ def generate_clientraw(state: StationState, config: dict, template_tokens: list[
     yesterday = d.get("_yesterday", {})
     _set(tokens, P, "yesterday_rain", _fmt(yesterday.get("rain_mm")))
 
-    _set(tokens, P, "hour", str(now.hour))
-    _set(tokens, P, "minute", str(now.minute))
-    _set(tokens, P, "seconds", str(now.second))
+    _set(tokens, P, "hour", f"{now.hour:02d}")
+    _set(tokens, P, "minute", f"{now.minute:02d}")
+    _set(tokens, P, "seconds", f"{now.second:02d}")
     station_name = config["station"]["name"].replace(" ", "_")
     _set(tokens, P, "station_name", station_name)
 
@@ -184,9 +184,9 @@ def generate_clientrawdaily(state: StationState, config: dict, template_tokens: 
     tz = ZoneInfo(config["station"]["timezone"])
     now = datetime.now(tz)
 
-    _set(tokens, P, "hour", str(now.hour))
-    _set(tokens, P, "minute", str(now.minute))
-    _set(tokens, P, "seconds", str(now.second))
+    _set(tokens, P, "hour", f"{now.hour:02d}")
+    _set(tokens, P, "minute", f"{now.minute:02d}")
+    _set(tokens, P, "seconds", f"{now.second:02d}")
     _set(tokens, P, "year_rain_total", _fmt(state.rain_counters.get("year_mm")))
 
     dom = state.daily_of_month
@@ -207,9 +207,9 @@ def generate_clientrawextra(state: StationState, config: dict, template_tokens: 
     d = state.daily
     y = d.get("_yesterday", {})
 
-    _set(tokens, P, "hour", str(now.hour))
-    _set(tokens, P, "minute", str(now.minute))
-    _set(tokens, P, "seconds", str(now.second))
+    _set(tokens, P, "hour", f"{now.hour:02d}")
+    _set(tokens, P, "minute", f"{now.minute:02d}")
+    _set(tokens, P, "seconds", f"{now.second:02d}")
 
     _set(tokens, P, "today_temperature_max", _fmt(d.get("temp_max_c")))
     _set(tokens, P, "today_temperature_min", _fmt(d.get("temp_min_c")))

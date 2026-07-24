@@ -8,7 +8,7 @@ import signal
 import sys
 import threading
 import time
-from datetime import datetime, timezone as dt_timezone
+from datetime import datetime, timedelta, timezone as dt_timezone
 from zoneinfo import ZoneInfo
 
 from . import calibrate, clientraw, tide
@@ -26,6 +26,21 @@ logger = logging.getLogger("davis_clientraw")
 
 MPH_TO_KT = 0.868976
 KT_TO_MPH = 1.0 / MPH_TO_KT
+
+
+def _seconds_until_time_of_day(time_of_day: str, tz_name: str) -> float:
+    """Seconds from now until the next occurrence of HH:MM in the given
+    timezone -- today's occurrence if it's still ahead, otherwise
+    tomorrow's. Used to anchor a daily task to a specific wall-clock time
+    instead of a fixed interval from whenever the service happened to last
+    start (which drifts to a different time every restart)."""
+    hour, minute = (int(p) for p in time_of_day.split(":"))
+    tz = ZoneInfo(tz_name)
+    now = datetime.now(tz)
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return (target - now).total_seconds()
 
 
 class Application:
@@ -329,7 +344,15 @@ class Application:
                 self._generate_tide_html()
             except Exception:
                 logger.exception("failed to generate tideprediction.html")
-            self._stop.wait(self.config["tide"]["interval_sec"])
+
+            time_of_day = self.config["tide"].get("time_of_day")
+            if time_of_day:
+                wait_sec = _seconds_until_time_of_day(
+                    time_of_day, self.config["station"]["timezone"]
+                )
+            else:
+                wait_sec = self.config["tide"]["interval_sec"]
+            self._stop.wait(wait_sec)
 
     def _tide_upload_worker(self) -> None:
         if not self.config.get("tide", {}).get("enabled"):

@@ -83,6 +83,7 @@
     "hfile_path": "tide-data/harmonics-2004-06-14.tcd",
     "remote_name": "tideprediction.html",
     "remote_dir": null,
-    "interval_sec": 86400
+    "interval_sec": 86400,
+    "time_of_day": null
   }
 }
