@@ -154,6 +154,8 @@ def create_app(
                 cfg["tide"]["interval_sec"] = int(
                     form.get("tide_interval_sec", cfg["tide"]["interval_sec"])
                 )
+                time_of_day_raw = form.get("tide_time_of_day", "").strip()
+                cfg["tide"]["time_of_day"] = time_of_day_raw if time_of_day_raw else None
                 cfg["tide"]["tide_bin"] = form.get("tide_bin", cfg["tide"]["tide_bin"])
                 cfg["tide"]["hfile_path"] = form.get("tide_hfile_path", cfg["tide"]["hfile_path"])
                 cfg["tide"]["remote_name"] = form.get(
@@ -256,6 +258,8 @@ def create_app(
         <label>Station</label><input name="tide_station" value="{{c.tide.station}}">
         <label>Days ahead</label><input name="tide_days" value="{{c.tide.days}}">
         <label>Upload interval (seconds)</label><input name="tide_interval_sec" value="{{c.tide.interval_sec}}">
+        <label>Run daily at (HH:MM, blank = use the interval above instead, relative to service start)</label>
+        <input name="tide_time_of_day" value="{{c.tide.time_of_day or ''}}" placeholder="e.g. 00:30">
         <label>tide binary path</label><input name="tide_bin" value="{{c.tide.tide_bin}}">
         <label>Harmonics file path</label><input name="tide_hfile_path" value="{{c.tide.hfile_path}}">
         <label>Remote filename</label><input name="tide_remote_name" value="{{c.tide.remote_name}}">

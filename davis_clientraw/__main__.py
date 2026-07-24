@@ -346,12 +346,18 @@ class Application:
                 logger.exception("failed to generate tideprediction.html")
 
             time_of_day = self.config["tide"].get("time_of_day")
+            wait_sec = self.config["tide"]["interval_sec"]
             if time_of_day:
-                wait_sec = _seconds_until_time_of_day(
-                    time_of_day, self.config["station"]["timezone"]
-                )
-            else:
-                wait_sec = self.config["tide"]["interval_sec"]
+                try:
+                    wait_sec = _seconds_until_time_of_day(
+                        time_of_day, self.config["station"]["timezone"]
+                    )
+                except (ValueError, KeyError):
+                    logger.warning(
+                        "tide.time_of_day=%r is not a valid HH:MM -- falling back to "
+                        "interval_sec for this cycle",
+                        time_of_day,
+                    )
             self._stop.wait(wait_sec)
 
     def _tide_upload_worker(self) -> None:
