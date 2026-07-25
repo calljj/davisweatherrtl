@@ -22,6 +22,7 @@ PAGE_SHELL = """
   fieldset { margin-bottom: 1.5em; }
   label { display: block; margin: 0.4em 0 0.1em; font-weight: bold; }
   input, select { width: 100%; max-width: 400px; padding: 0.3em; }
+  textarea { width: 100%; max-width: 500px; padding: 0.3em; font-family: inherit; }
   table { border-collapse: collapse; width: 100%; }
   td, th { border: 1px solid #ccc; padding: 0.3em 0.6em; text-align: left; }
   pre { background: #f4f4f4; padding: 1em; overflow-x: auto; }
@@ -42,6 +43,13 @@ PAGE_SHELL = """
 </body>
 </html>
 """
+
+
+def _format_wind_correction_text(cfg: dict) -> str:
+    from .wind_correction import format_wind_correction_sectors
+
+    sectors = cfg.get("wind_correction", {}).get("sectors", [])
+    return format_wind_correction_sectors(sectors)
 
 
 def _upload_row_html(key: str, entry: dict, cfg: dict) -> str:
@@ -128,6 +136,11 @@ def create_app(
             cfg["units"] = form.get("units", cfg["units"])
             cfg["rain_bucket_mm"] = float(form.get("rain_bucket_mm", cfg["rain_bucket_mm"]))
 
+            from .wind_correction import parse_wind_correction_sectors
+            cfg.setdefault("wind_correction", {})["sectors"] = parse_wind_correction_sectors(
+                form.get("wind_correction_sectors", "")
+            )
+
             cfg["rtldavis"]["bin"] = form.get("rtldavis_bin", cfg["rtldavis"]["bin"])
             cfg["rtldavis"]["region"] = form.get("rtldavis_region", cfg["rtldavis"]["region"])
             cfg["rtldavis"]["ppm"] = int(form.get("rtldavis_ppm", cfg["rtldavis"]["ppm"]))
@@ -205,6 +218,21 @@ def create_app(
           {% endfor %}
         </select>
         <label>Rain bucket size (mm)</label><input name="rain_bucket_mm" value="{{c.rain_bucket_mm}}">
+        </fieldset>
+
+        <fieldset>
+        <legend>Wind speed correction</legend>
+        <p class="hint">Compensates for a nearby obstruction (a building, treeline, etc.)
+        that distorts airflow from a specific direction. Applied to both wind speed and
+        gust before they're stored/uploaded, so the corrected value is what shows up in
+        clientraw.txt and everywhere downstream (including a kiosk display reading that
+        file), not just here.</p>
+        <label>Sectors: one per line, "&lt;from_deg&gt;-&lt;to_deg&gt;:&lt;percent&gt;[:label]"
+        -- e.g. "60-120:10:building to the east" increases readings by 10% when the wind is
+        from 60&deg; to 120&deg;. Negative percent decreases. A sector spanning past 360/0
+        (e.g. "350-30:-5") wraps correctly. If sectors overlap, the first one listed wins.</label>
+        <textarea name="wind_correction_sectors" placeholder="60-120:10:building to the east"
+                  style="min-height:6em; font-family:monospace">{{ wind_correction_text }}</textarea>
         </fieldset>
 
         <fieldset>
@@ -318,6 +346,7 @@ def create_app(
         <form method="post" action="{{ url_for('test_connection') }}"><button>Test connection</button></form>
         """,
             c=cfg,
+            wind_correction_text=_format_wind_correction_text(cfg),
         )
         return render(body)
 

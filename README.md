@@ -185,6 +185,28 @@ repeater" when the most recent packet arrived that way, plus the current
 AFC frequency correction (`rtldavis`'s own running per-transmitter drift
 compensation, now surfaced instead of silently applied).
 
+## Wind speed correction by direction
+
+Compensates for a nearby obstruction (a building, treeline, etc.) that
+distorts airflow from a specific bearing -- e.g. a building to the east
+might make readings from that direction read artificially low.
+
+Configure on `/config`'s "Wind speed correction" section, one sector per
+line: `<from_deg>-<to_deg>:<percent>[:label]`, e.g.:
+
+```
+60-120:10:building to the east
+350-30:-5:treeline north
+```
+
+A sector spanning past 360/0 (like the second example) wraps correctly.
+Percent can be negative (decrease) or positive (increase); if sectors
+overlap, the first one listed wins -- define one combined sector instead
+if you want them to stack. Applied to both wind speed and gust, before
+they're stored -- the corrected value is what's in `clientraw.txt` and
+everywhere downstream (including a kiosk display reading that file), not
+just this app's own `/status` page.
+
 ## What the ISS provides vs. console-only
 
 From ISS packets: outdoor temp, humidity, wind speed/gust/direction, rain

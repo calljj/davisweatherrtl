@@ -25,6 +25,9 @@
   },
   "units": "metric",
   "rain_bucket_mm": 0.2,
+  "wind_correction": {
+    "sectors": []
+  },
   "pressure": {
     "source": "placeholder",
     "placeholder_hpa": 1013.2,
