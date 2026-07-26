@@ -20,9 +20,12 @@ CONFIG = {
 @pytest.fixture
 def state(tmp_path):
     s = StationState(str(tmp_path / "state.sqlite"), "Europe/London")
+    # gust_kt is derived (peak wind_speed_kt over the last GUST_WINDOW_SEC),
+    # not settable directly -- seed a higher earlier reading so it's
+    # distinct from the "current" 8.5 set below, same as a real gust would be.
+    s.update_current(wind_speed_kt=12.0)
     s.update_current(
         wind_speed_kt=8.5,
-        gust_kt=12.0,
         wind_dir_deg=260,
         temp_c=20.0,
         humidity_pct=83,
@@ -63,6 +66,10 @@ def test_clientraw_confirmed_fields_overwritten(state):
     # clientraw.txt read this field instead of the current-direction one
     # at index 3, and used to see a permanently frozen value).
     assert out[117] == "260"
+    # Today's / last-hour's peak gust -- both previously left unpopulated,
+    # same class of bug as field 117 above.
+    assert out[71] == "12.0"
+    assert out[133] == "12.0"
     assert out[4] == "20.0"
     assert out[5] == "83"
     assert out[6] == "1028.2"

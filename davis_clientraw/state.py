@@ -5,10 +5,19 @@ import json
 import math
 import sqlite3
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
 from zoneinfo import ZoneInfo
+
+# How far back the "current gust" (field 2 of clientraw.txt) looks for its
+# peak. The ISS's own onboard gust calculation is a 10-minute peak-hold that
+# only arrives in occasional sub-packets, so it lags well behind the ~2s
+# wind speed samples and can look "stuck" between updates -- this instead
+# takes the peak of our own fast wind-speed samples, so it moves as soon as
+# a new peak is actually seen rather than waiting on the hardware's own timer.
+GUST_WINDOW_SEC = 60.0
 
 
 def _now(tz: str) -> datetime:
@@ -60,6 +69,10 @@ class StationState:
         self.rain_counters: dict[str, Any] = {}
         # Day-of-month arrays (index 0 = day 1) for clientrawdaily.txt, None = no data yet.
         self.daily_of_month: dict[str, list[Optional[float]]] = {}
+        # (monotonic_time, wind_speed_kt) samples within GUST_WINDOW_SEC --
+        # transient, in-memory only (a restart losing up to a minute of
+        # window is harmless, unlike the persisted state above).
+        self._speed_samples: list[tuple[float, float]] = []
 
         self._load()
         self._roll_day_if_needed()
@@ -164,6 +177,16 @@ class StationState:
     def update_current(self, **fields: Any) -> None:
         with self._lock:
             self._roll_day_if_needed()
+
+            wind_speed_kt = fields.get("wind_speed_kt")
+            if wind_speed_kt is not None:
+                now = time.monotonic()
+                self._speed_samples.append((now, wind_speed_kt))
+                self._speed_samples = [
+                    (t, v) for t, v in self._speed_samples if now - t <= GUST_WINDOW_SEC
+                ]
+                fields["gust_kt"] = max(v for _, v in self._speed_samples)
+
             self.current.update(fields)
 
             temp_c = fields.get("temp_c")
@@ -250,6 +273,14 @@ class StationState:
         # boundary (e.g. averaging 350 and 10) can't land on 360.0 instead
         # of the equivalent, cleaner 0.0.
         return round(math.degrees(math.atan2(sin_sum, cos_sum)), 6) % 360
+
+    def gust_max_last_hour_kt(self) -> Optional[float]:
+        """Peak gust across minute_history, which is itself capped at the
+        last 60 one-a-minute samples -- so this is naturally "last hour",
+        no separate windowing needed."""
+        if not self.minute_history:
+            return None
+        return max(s.get("gust_kt", 0.0) for s in self.minute_history)
 
     def append_minute_sample(self) -> None:
         with self._lock:

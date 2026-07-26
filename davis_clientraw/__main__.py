@@ -131,24 +131,25 @@ class Application:
             fields["temp_c"] = (decoded.temp_f - 32) * 5 / 9
         if decoded.humidity_pct is not None:
             fields["humidity_pct"] = decoded.humidity_pct
-        if decoded.wind_gust_mph is not None:
-            fields["gust_kt"] = decoded.wind_gust_mph * MPH_TO_KT
+        # Note: the ISS also transmits its own gust reading (decoded.wind_gust_mph),
+        # but that's a 10-minute peak-hold computed on the hardware itself and
+        # only arrives in occasional sub-packets, so it lags behind and updates
+        # far less often than wind_speed_kt does. gust_kt is instead derived by
+        # StationState itself, from a fast rolling window of wind_speed_kt
+        # samples -- see state.py's GUST_WINDOW_SEC.
 
         # Direction-dependent correction (e.g. an obstruction distorting
         # airflow from a specific bearing) -- applied here, before storage,
         # so the corrected value is what's recorded, uploaded in
         # clientraw.txt, and shown everywhere downstream (including a
         # kiosk display reading that file), not just on this app's own
-        # /status page.
+        # /status page. gust_kt derives from wind_speed_kt inside
+        # StationState, so correcting it here too would double-apply.
         sectors = self.config.get("wind_correction", {}).get("sectors", [])
         if sectors:
             fields["wind_speed_kt"] = apply_wind_direction_correction(
                 fields["wind_speed_kt"], wind_dir_deg, sectors
             )
-            if "gust_kt" in fields:
-                fields["gust_kt"] = apply_wind_direction_correction(
-                    fields["gust_kt"], wind_dir_deg, sectors
-                )
 
         if decoded.rain_rate_mm_h is not None:
             fields["rain_rate_mm_h"] = decoded.rain_rate_mm_h
