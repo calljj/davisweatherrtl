@@ -90,6 +90,7 @@ def generate_clientraw(state: StationState, config: dict, template_tokens: list[
     _set(tokens, P, "average_wind_speed", _fmt(c.get("wind_speed_kt")))
     _set(tokens, P, "gust_speed", _fmt(c.get("gust_kt")))
     _set(tokens, P, "wind_direction", _fmt(c.get("wind_dir_deg"), 0))
+    _set(tokens, P, "wind_average_direction", _fmt(state.average_wind_dir_deg(), 0))
     _set(tokens, P, "temperature", _fmt(c.get("temp_c")))
     _set(tokens, P, "humidity", _fmt(c.get("humidity_pct"), 0))
     _set(tokens, P, "barometer", _fmt(c.get("pressure_hpa")))

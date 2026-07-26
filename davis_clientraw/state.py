@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 import threading
 from dataclasses import dataclass, field
@@ -225,6 +226,30 @@ class StationState:
                 or (not higher_is_record and value < existing["value"])
             ):
                 self.records[key_suffix] = stamp
+
+    def average_wind_dir_deg(self, window_minutes: int = 10) -> Optional[float]:
+        """Circular mean of wind direction over the last `window_minutes`
+        one-a-minute samples (falls back to whatever's available if there's
+        less history than that, e.g. just after startup). A plain
+        arithmetic mean breaks near due north -- averaging 350 and 10 would
+        naively give 180 (due south) instead of 0 -- so this averages the
+        sin/cos components instead and converts back at the end, which
+        handles that wraparound correctly."""
+        samples = self.minute_history[-window_minutes:]
+        if not samples:
+            return None
+        sin_sum = sum(math.sin(math.radians(s["wind_dir_deg"])) for s in samples)
+        cos_sum = sum(math.cos(math.radians(s["wind_dir_deg"])) for s in samples)
+        if math.hypot(sin_sum, cos_sum) < 1e-9:
+            # Samples cancel out (near-)exactly -- e.g. an even split
+            # between opposing directions -- so the mean direction is
+            # genuinely undefined rather than an arbitrary artifact of
+            # floating-point noise.
+            return None
+        # Rounded before the modulo so floating-point noise at the 0/360
+        # boundary (e.g. averaging 350 and 10) can't land on 360.0 instead
+        # of the equivalent, cleaner 0.0.
+        return round(math.degrees(math.atan2(sin_sum, cos_sum)), 6) % 360
 
     def append_minute_sample(self) -> None:
         with self._lock:

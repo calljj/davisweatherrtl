@@ -185,6 +185,19 @@ repeater" when the most recent packet arrived that way, plus the current
 AFC frequency correction (`rtldavis`'s own running per-transmitter drift
 compensation, now surfaced instead of silently applied).
 
+## Wind direction (current vs. average)
+
+`clientraw.txt` has two separate wind direction fields, per the Weather
+Display spec third-party sites/software are built against: the
+"current" reading (field 3, what this project's own kiosk/status page
+reads, refreshed on every packet) and a distinct "average" reading
+(field 117). Only field 3 was ever wired up to real data until now --
+field 117 sat at its template's static placeholder value forever, which
+looked like a permanently frozen wind direction to any consumer reading
+that field instead. It's now a genuine circular mean (correctly handling
+the 0/360 wraparound, so averaging e.g. 350&deg; and 10&deg; gives 0&deg;,
+not a naive-mean 180&deg;) over the last 10 one-a-minute samples.
+
 ## Wind direction offset
 
 Corrects for the wind vane not being mounted pointing exactly at true

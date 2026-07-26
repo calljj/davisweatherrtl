@@ -58,6 +58,11 @@ def test_clientraw_confirmed_fields_overwritten(state):
     assert out[1] == "8.5"
     assert out[2] == "12.0"
     assert out[3] == "260"
+    # Average wind direction (field 117, historically left as the
+    # template's static placeholder -- some third-party consumers of
+    # clientraw.txt read this field instead of the current-direction one
+    # at index 3, and used to see a permanently frozen value).
+    assert out[117] == "260"
     assert out[4] == "20.0"
     assert out[5] == "83"
     assert out[6] == "1028.2"
