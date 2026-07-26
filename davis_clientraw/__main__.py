@@ -17,7 +17,7 @@ from .source_rtldavis import ReceivedPacket, RtldavisSource
 from .state import StationState
 from .uploaders import ReconnectingUploader
 from .webui import run_webui
-from .wind_correction import apply_wind_direction_correction
+from .wind_correction import apply_direction_offset, apply_wind_direction_correction
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -114,9 +114,18 @@ class Application:
         cutoff = time.time() - 60
         self._packet_times = [t for t in self._packet_times if t > cutoff]
 
+        # Vane mounting offset (e.g. not pointing exactly at true north) --
+        # applied first, so the corrected bearing is what gets stored,
+        # uploaded, and used as the lookup key for the sector correction
+        # below (sectors are defined in true-compass terms).
+        offset_deg = self.config.get("wind_correction", {}).get("direction_offset_deg", 0)
+        wind_dir_deg = (
+            apply_direction_offset(decoded.wind_dir_deg, offset_deg) if offset_deg else decoded.wind_dir_deg
+        )
+
         fields: dict = {
             "wind_speed_kt": decoded.wind_speed_mph * MPH_TO_KT,
-            "wind_dir_deg": decoded.wind_dir_deg,
+            "wind_dir_deg": wind_dir_deg,
         }
         if decoded.temp_f is not None:
             fields["temp_c"] = (decoded.temp_f - 32) * 5 / 9
@@ -134,11 +143,11 @@ class Application:
         sectors = self.config.get("wind_correction", {}).get("sectors", [])
         if sectors:
             fields["wind_speed_kt"] = apply_wind_direction_correction(
-                fields["wind_speed_kt"], decoded.wind_dir_deg, sectors
+                fields["wind_speed_kt"], wind_dir_deg, sectors
             )
             if "gust_kt" in fields:
                 fields["gust_kt"] = apply_wind_direction_correction(
-                    fields["gust_kt"], decoded.wind_dir_deg, sectors
+                    fields["gust_kt"], wind_dir_deg, sectors
                 )
 
         if decoded.rain_rate_mm_h is not None:

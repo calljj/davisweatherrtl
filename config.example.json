@@ -26,7 +26,8 @@
   "units": "metric",
   "rain_bucket_mm": 0.2,
   "wind_correction": {
-    "sectors": []
+    "sectors": [],
+    "direction_offset_deg": 0
   },
   "pressure": {
     "source": "placeholder",

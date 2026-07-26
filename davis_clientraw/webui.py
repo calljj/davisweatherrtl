@@ -137,8 +137,10 @@ def create_app(
             cfg["rain_bucket_mm"] = float(form.get("rain_bucket_mm", cfg["rain_bucket_mm"]))
 
             from .wind_correction import parse_wind_correction_sectors
-            cfg.setdefault("wind_correction", {})["sectors"] = parse_wind_correction_sectors(
-                form.get("wind_correction_sectors", "")
+            wc = cfg.setdefault("wind_correction", {})
+            wc["sectors"] = parse_wind_correction_sectors(form.get("wind_correction_sectors", ""))
+            wc["direction_offset_deg"] = float(
+                form.get("wind_direction_offset_deg", wc.get("direction_offset_deg", 0)) or 0
             )
 
             cfg["rtldavis"]["bin"] = form.get("rtldavis_bin", cfg["rtldavis"]["bin"])
@@ -221,7 +223,14 @@ def create_app(
         </fieldset>
 
         <fieldset>
-        <legend>Wind speed correction</legend>
+        <legend>Wind speed &amp; direction correction</legend>
+        <label>Direction offset (degrees, +/-)</label>
+        <p class="hint">Corrects for the wind vane not being mounted pointing exactly at
+        true north -- e.g. if it's rotated 15&deg; clockwise from north, set this to -15 so
+        readings shift back to the true bearing. Applied before anything else that depends
+        on direction (storage, upload, the sectors below), so the corrected bearing is what
+        shows up everywhere downstream.</p>
+        <input name="wind_direction_offset_deg" value="{{ c.wind_correction.direction_offset_deg | default(0) }}">
         <p class="hint">Compensates for a nearby obstruction (a building, treeline, etc.)
         that distorts airflow from a specific direction. Applied to both wind speed and
         gust before they're stored/uploaded, so the corrected value is what shows up in

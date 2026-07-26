@@ -43,6 +43,14 @@ def apply_wind_direction_correction(value: float, wind_dir_deg: float, sectors: 
     return value * (1 + percent / 100.0)
 
 
+def apply_direction_offset(wind_dir_deg: float, offset_deg: float) -> float:
+    """Shifts a raw vane reading by a fixed +/- degree offset -- corrects
+    for the vane not being mounted pointing exactly at true north. Applied
+    before anything else that depends on direction (sector lookups above,
+    storage, upload), so every consumer sees the corrected bearing."""
+    return (wind_dir_deg + offset_deg) % 360
+
+
 def parse_wind_correction_sectors(text: str) -> list[dict]:
     """Parses the settings-page textarea format, one sector per line:
     "<from_deg>-<to_deg>:<percent>[:<label>]", e.g. "60-120:10:building to

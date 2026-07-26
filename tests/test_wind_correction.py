@@ -1,4 +1,5 @@
 from davis_clientraw.wind_correction import (
+    apply_direction_offset,
     apply_wind_direction_correction,
     find_correction_percent,
     format_wind_correction_sectors,
@@ -106,3 +107,23 @@ def test_format_multiple_sectors():
         {"from_deg": 350, "to_deg": 30, "percent": -5, "label": ""},
     ]
     assert format_wind_correction_sectors(sectors) == "60-120:10:building\n350-30:-5"
+
+
+def test_apply_direction_offset_positive():
+    assert apply_direction_offset(90, 15) == 105
+
+
+def test_apply_direction_offset_negative():
+    assert apply_direction_offset(90, -15) == 75
+
+
+def test_apply_direction_offset_wraps_above_360():
+    assert apply_direction_offset(350, 20) == 10
+
+
+def test_apply_direction_offset_wraps_below_zero():
+    assert apply_direction_offset(10, -20) == 350
+
+
+def test_apply_direction_offset_zero_is_noop():
+    assert apply_direction_offset(123, 0) == 123

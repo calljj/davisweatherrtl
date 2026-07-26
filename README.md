@@ -185,14 +185,24 @@ repeater" when the most recent packet arrived that way, plus the current
 AFC frequency correction (`rtldavis`'s own running per-transmitter drift
 compensation, now surfaced instead of silently applied).
 
+## Wind direction offset
+
+Corrects for the wind vane not being mounted pointing exactly at true
+north -- e.g. if it's physically rotated 15° clockwise from north, set
+this to `-15` on `/config`'s "Wind speed & direction correction" section
+so readings shift back to the true bearing. Applied before anything else
+that depends on direction (storage, upload, and the sector correction
+below, which is defined in true-compass terms), so the corrected bearing
+is what shows up everywhere downstream.
+
 ## Wind speed correction by direction
 
 Compensates for a nearby obstruction (a building, treeline, etc.) that
 distorts airflow from a specific bearing -- e.g. a building to the east
 might make readings from that direction read artificially low.
 
-Configure on `/config`'s "Wind speed correction" section, one sector per
-line: `<from_deg>-<to_deg>:<percent>[:label]`, e.g.:
+Configure on `/config`'s "Wind speed & direction correction" section, one
+sector per line: `<from_deg>-<to_deg>:<percent>[:label]`, e.g.:
 
 ```
 60-120:10:building to the east
