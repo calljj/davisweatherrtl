@@ -28,6 +28,25 @@ logger = logging.getLogger("davis_clientraw")
 MPH_TO_KT = 0.868976
 KT_TO_MPH = 1.0 / MPH_TO_KT
 
+# Reject a wind speed reading if it jumps by more than this many knots from
+# the last accepted one -- catches spurious decode glitches (e.g. a corrupt
+# packet that still happens to pass CRC) rather than genuine gusts, which
+# don't swing by this much between ~2.5s samples in practice.
+WIND_SPEED_SPIKE_THRESHOLD_KT = 40.0
+
+
+def _is_wind_speed_spike(
+    new_kt: float, last_kt: float | None, threshold_kt: float = WIND_SPEED_SPIKE_THRESHOLD_KT
+) -> bool:
+    """True if `new_kt` jumps by more than `threshold_kt` from `last_kt` --
+    signals a likely decode glitch (e.g. a corrupt packet that still
+    happens to pass CRC) rather than a genuine gust, which doesn't swing
+    this much between consecutive ~2.5s samples in practice. Always False
+    when there's no prior reading yet to compare against."""
+    if last_kt is None:
+        return False
+    return abs(new_kt - last_kt) > threshold_kt
+
 
 def _seconds_until_time_of_day(time_of_day: str, tz_name: str) -> float:
     """Seconds from now until the next occurrence of HH:MM in the given
@@ -64,6 +83,7 @@ class Application:
         self._reception_paused = threading.Event()
         self._calibrator: calibrate.Calibrator | None = None
         self._last_rain_count: int | None = None
+        self._last_wind_speed_kt: float | None = None
         self._packet_times: list[float] = []
         self._service_state = {
             "running_state": "starting",
@@ -124,9 +144,19 @@ class Application:
         )
 
         fields: dict = {
-            "wind_speed_kt": decoded.wind_speed_mph * MPH_TO_KT,
             "wind_dir_deg": wind_dir_deg,
         }
+
+        raw_wind_speed_kt = decoded.wind_speed_mph * MPH_TO_KT
+        if _is_wind_speed_spike(raw_wind_speed_kt, self._last_wind_speed_kt):
+            logger.warning(
+                "dropping spurious wind speed reading: %.1f kt (last accepted %.1f kt)",
+                raw_wind_speed_kt, self._last_wind_speed_kt,
+            )
+        else:
+            self._last_wind_speed_kt = raw_wind_speed_kt
+            fields["wind_speed_kt"] = raw_wind_speed_kt
+
         if decoded.temp_f is not None:
             fields["temp_c"] = (decoded.temp_f - 32) * 5 / 9
         if decoded.humidity_pct is not None:
@@ -146,7 +176,7 @@ class Application:
         # /status page. gust_kt derives from wind_speed_kt inside
         # StationState, so correcting it here too would double-apply.
         sectors = self.config.get("wind_correction", {}).get("sectors", [])
-        if sectors:
+        if sectors and "wind_speed_kt" in fields:
             fields["wind_speed_kt"] = apply_wind_direction_correction(
                 fields["wind_speed_kt"], wind_dir_deg, sectors
             )

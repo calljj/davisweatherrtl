@@ -230,6 +230,33 @@ they're stored -- the corrected value is what's in `clientraw.txt` and
 everywhere downstream (including a kiosk display reading that file), not
 just this app's own `/status` page.
 
+## Gust calculation
+
+The ISS also transmits its own gust figure in occasional sub-packets, but
+that's a 10-minute peak-hold computed on the hardware itself, refreshed
+only every ~30-90s -- it visibly lags behind wind speed, which updates
+every ~2s. Gust (`clientraw.txt` field 2, and the derived max fields at
+71/133) is instead computed here: the peak of our own fast wind speed
+samples over a rolling 60-second window, so it moves in step with wind
+speed and reacts as soon as a new peak is actually seen.
+
+## Spurious wind speed spike filtering
+
+Occasionally a corrupt packet still passes its CRC check by coincidence,
+producing a wildly wrong wind speed reading (seen in practice: readings
+over 100 kt on an otherwise calm day). Every new reading is compared
+against the last *accepted* one, and rejected outright if it jumps by
+more than 40 kt -- a swing real gusts don't produce between consecutive
+~2.5-second samples. A rejected reading is just dropped (logged as a
+warning); the current/gust/history values are left at their last good
+state rather than being overwritten with noise. Since gust is derived
+from this same wind speed stream (see above), this also stops a spurious
+spike from contaminating gust or any of its max-tracking fields.
+
+The comparison uses the raw, pre-correction reading, so a legitimate
+change from the direction-based % correction above (e.g. wind swinging
+into a corrected sector) can't itself be mistaken for a spike.
+
 ## What the ISS provides vs. console-only
 
 From ISS packets: outdoor temp, humidity, wind speed/gust/direction, rain
