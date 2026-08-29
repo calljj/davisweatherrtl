@@ -4,6 +4,8 @@ from __future__ import annotations
 import ftplib
 import logging
 import posixpath
+import re
+import threading
 import time
 from abc import ABC, abstractmethod
 
@@ -12,6 +14,24 @@ logger = logging.getLogger(__name__)
 
 class UploadError(Exception):
     pass
+
+
+# Servers with ProFTPD-style "HiddenStores" write an upload to a hidden
+# temporary file first and rename it into place once the transfer
+# completes. If a transfer is interrupted, that hidden file is left
+# behind, and every later upload to the same name is refused with
+# "Temporary hidden file <path> already exists" -- permanently, since the
+# name we upload to is stable. The server names the exact stale path in
+# the error, so it can be deleted and the upload retried rather than
+# needing someone to clear it by hand.
+_STALE_HIDDEN_FILE_RE = re.compile(
+    r"Temporary hidden file (?P<path>.+?) already exists", re.IGNORECASE
+)
+
+
+def parse_stale_hidden_file(message: str) -> str | None:
+    match = _STALE_HIDDEN_FILE_RE.search(message)
+    return match.group("path") if match else None
 
 
 # How often paramiko sends an SSH-level keepalive over an idle connection.
@@ -185,9 +205,22 @@ class FtpUploader(Uploader):
         if self.ftps:
             self._ftp.prot_p()
 
-    def put(self, local_path: str, remote_path: str) -> None:
+    def _store(self, local_path: str, remote_path: str) -> None:
         with open(local_path, "rb") as f:
             self._ftp.storbinary(f"STOR {remote_path}", f)
+
+    def put(self, local_path: str, remote_path: str) -> None:
+        try:
+            self._store(local_path, remote_path)
+        except ftplib.error_perm as exc:
+            stale = parse_stale_hidden_file(str(exc))
+            if stale is None:
+                raise
+            # Left over from an interrupted transfer; without clearing it,
+            # every future upload of this file fails the same way forever.
+            logger.warning("clearing stale hidden upload file %s", stale)
+            self._ftp.delete(stale)
+            self._store(local_path, remote_path)
 
     def rename(self, remote_old: str, remote_new: str) -> None:
         try:
@@ -240,6 +273,13 @@ class ReconnectingUploader:
         self._config_getter = config_getter
         self._uploader: Uploader | None = None
         self._backoff = 1.0
+        # One connection per instance, but several threads share an instance:
+        # the per-file upload worker and the threads "Send now" spawns both
+        # upload the same file_key. Interleaving two uploads on one FTP
+        # control connection desynchronises the protocol ("Bad sequence of
+        # commands", "PASV: data transfer in progress"), collides on the
+        # shared .tmp name, and races self._uploader to None mid-upload.
+        self._lock = threading.Lock()
 
     def _ensure_connected(self) -> None:
         if self._uploader is not None and getattr(self._uploader, "is_alive", lambda: True)():
@@ -255,21 +295,25 @@ class ReconnectingUploader:
         self._backoff = 1.0
 
     def upload(self, local_path: str, remote_dir: str, remote_name: str) -> bool:
-        try:
-            self._ensure_connected()
-            self._uploader.atomic_upload(local_path, remote_dir, remote_name)
-            return True
-        except Exception as exc:
-            logger.warning("upload of %s failed: %s", remote_name, exc)
-            if self._uploader is not None:
-                try:
-                    self._uploader.close()
-                except Exception:
-                    pass
-                self._uploader = None
-            time.sleep(min(self._backoff, 30))
-            self._backoff *= 2
-            return False
+        # Held for the whole attempt, backoff included: concurrent callers
+        # must queue rather than pile onto a connection that is mid-transfer
+        # or already failing.
+        with self._lock:
+            try:
+                self._ensure_connected()
+                self._uploader.atomic_upload(local_path, remote_dir, remote_name)
+                return True
+            except Exception as exc:
+                logger.warning("upload of %s failed: %s", remote_name, exc)
+                if self._uploader is not None:
+                    try:
+                        self._uploader.close()
+                    except Exception:
+                        pass
+                    self._uploader = None
+                time.sleep(min(self._backoff, 30))
+                self._backoff *= 2
+                return False
 
     def close(self) -> None:
         if self._uploader is not None:

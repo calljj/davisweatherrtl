@@ -358,6 +358,28 @@ run).
   EU -v` startup log, or the `/calibrate` page's gain field, for the exact
   list.
 
+## Uploads
+
+Each file is uploaded by its own worker thread, over a connection kept open
+between uploads (`ReconnectingUploader`). Uploads on a given connection are
+serialised with a lock: the per-file worker and the threads "Send now"
+spawns both upload the same file, and interleaving two transfers on one FTP
+control connection breaks in confusing, intermittent ways -- `Bad sequence
+of commands`, `425 PASV: data transfer in progress`, both transfers
+colliding on the same `.tmp` name, or one thread dropping the shared
+connection while the other is mid-upload.
+
+Each upload is atomic: the file goes to `<name>.tmp` and is renamed into
+place, so a reader never sees a half-written file. Servers configured with
+ProFTPD-style `HiddenStores` do the same thing again underneath, staging
+the transfer in a hidden `.in.<name>.` file. If one of those transfers is
+interrupted the hidden file is left behind, and because the name we upload
+to is stable, *every* later upload of that file is then refused with
+`Temporary hidden file <path> already exists` -- permanently, until someone
+clears it by hand. The server names the exact path in that error, so it is
+deleted and the upload retried automatically (logged as `clearing stale
+hidden upload file`).
+
 ## Tide predictions (tideprediction.html)
 
 Independent of the Davis ISS pipeline: once every 24h, generates a 5-day
