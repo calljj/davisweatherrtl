@@ -211,8 +211,16 @@ def create_app(
         <label>Latitude</label><input name="latitude" value="{{c.station.latitude}}">
         <label>Longitude</label><input name="longitude" value="{{c.station.longitude}}">
         <label>Timezone</label><input name="timezone" value="{{c.station.timezone}}">
-        <label>Davis station number (as shown on the console/DIP switch; blank = accept any ISS)</label>
-        <input name="station_number" value="{{ (c.station.transmitter_id + 1) if c.station.transmitter_id is not none else '' }}" placeholder="1-8, or blank">
+        <label>Davis station number (as shown on the console/DIP switch)</label>
+        {% if c.station.transmitter_id is none %}
+        <p class="warn"><strong>Not set -- reception will never start.</strong> Leaving this
+        blank tells rtldavis to listen for all 8 transmitter IDs, and it waits to hear from
+        every one of them before it starts delivering packets, so a single ISS never gets
+        past that stage. Note this doesn't look like a config fault from the outside:
+        frequency calibration still passes perfectly, because a sweep parks on one frequency
+        and never exercises hop-tracking.</p>
+        {% endif %}
+        <input name="station_number" value="{{ (c.station.transmitter_id + 1) if c.station.transmitter_id is not none else '' }}" placeholder="1-8">
         <label>Units</label>
         <select name="units">
           {% for u in ['metric','imperial'] %}
@@ -388,6 +396,24 @@ def create_app(
         afc_hz = state.get("last_freq_corr_hz")
         afc_html = f"{afc_hz:+d} Hz" if afc_hz is not None else "unknown"
 
+        # No station number set means rtldavis is told to track all 8
+        # transmitter IDs -- and it only leaves its startup "init" phase once
+        # it has seen a packet from *every* transmitter it was told to track,
+        # so with a single real ISS it stays in init forever and never
+        # delivers a packet. Frequency sweeps still succeed (they park on one
+        # frequency and skip hop-tracking entirely), which makes this look
+        # convincingly like a tuning/aerial fault rather than a config one.
+        no_station_number_warning = ""
+        if cfg["station"].get("transmitter_id") is None:
+            no_station_number_warning = (
+                '<p class="warn"><strong>No Davis station number set.</strong> '
+                "Reception will never start: rtldavis is being told to listen for all 8 "
+                "transmitter IDs, and it waits to hear from every one of them before it "
+                "begins delivering packets -- so a single ISS never gets past that stage. "
+                f'Set your station number (1-8) on the <a href="{url_for("config_page")}">'
+                "Config page</a>.</p>"
+            )
+
         region = load_config()["rtldavis"].get("region", "EU")
         if region not in ("EU", "US"):
             channels_label = f"{region} channel frequencies"
@@ -407,6 +433,7 @@ def create_app(
 
         body = f"""
         <h2>Status: {state.get('running_state', 'unknown')}</h2>
+        {no_station_number_warning}
         <p style="font-size:1.2em"><span style="color:{signal_color}">{signal_dot}</span> {signal_text}</p>
         <p>Packets/min: {state.get('packets_per_min', 0)}</p>
         <p>{channels_label}: {channels_html} &nbsp; <a href="{url_for('calibrate_page')}">(recalibrate)</a></p>

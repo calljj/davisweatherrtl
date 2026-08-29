@@ -273,6 +273,46 @@ transport (SFTP/SCP/FTP) credentials, remote paths, per-file upload
 intervals, rtldavis invocation, station details (including the Davis station
 number, 1-8, matching your console/DIP switch), and units.
 
+### You must set the Davis station number
+
+This is not optional, despite being blank in a fresh `config.json`. Leaving
+it unset makes `rtldavis.transmitters` default to `255` -- listen for all 8
+transmitter IDs -- and rtldavis only leaves its startup "init" phase once
+it has seen a packet from *every* transmitter it was told to track:
+
+```go
+if visitCount == maxChan {      // maxChan == 8 when transmitters == 255
+    initTransmitrs = false      // only now does normal reception begin
+```
+
+With one real ISS that counter never reaches 8, so it stays in init
+forever and never delivers a single packet. (Separately, any tracked-but-
+absent transmitter also keeps tripping the `maxmissed` re-init, so even
+the init phase restarts endlessly.)
+
+This is worth calling out because it doesn't present as a config fault:
+`/status` just shows "NO SIGNAL (no packet ever received)" while
+**frequency calibration still passes perfectly** -- a sweep parks on a
+single frequency and never exercises hop-tracking at all. It reads as an
+aerial, gain, or tuning problem. Both `/status` and `/config` now show an
+explicit warning when the station number is unset.
+
+**Don't know your station number?** It's on the ISS DIP switch / console,
+but you can also just ask the radio, with the service stopped so the
+RTL-SDR is free:
+
+```
+sudo systemctl stop davis-clientraw
+timeout 90 bin/rtldavis -tf EU -tr 255 -maxmissed 51 -gain <your-gain> -v 2>&1 \
+    | grep 'TRANSMITTER'
+sudo systemctl start davis-clientraw
+```
+
+Every ID it can actually hear is logged as `TRANSMITTER <n> SEEN`. That
+`<n>` is the raw 0-7 protocol ID; the web UI's "Davis station number"
+field is 1-based, so enter `<n> + 1` (e.g. `TRANSMITTER 5 SEEN` -> enter
+`6`, which stores `transmitter_id: 5` and `transmitters: 32`).
+
 **The web UI has no authentication -- bind/expose it on your LAN only.**
 `config.json` is chmod 600 after each save since it holds credentials, and
 is excluded from this repo via `.gitignore` -- copy `config.example.json` if
