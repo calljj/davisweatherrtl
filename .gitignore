@@ -16,3 +16,5 @@ tide-data/*.tcd
 # Editor/OS cruft
 .DS_Store
 *.swp
+# Timestamped config backups hold the same credentials as config.json.
+config.json.bak*

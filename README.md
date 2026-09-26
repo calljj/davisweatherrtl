@@ -135,6 +135,56 @@ ongoing drift per transmitter/channel automatically, on every packet,
 without needing another calibration run. The current AFC correction is
 shown on `/status`.
 
+### Strong nearby 868MHz signals (front-end blocking)
+
+An RTL-SDR has far less selectivity and dynamic range than a Davis
+console. A strong out-of-band carrier in the 868MHz SRD band -- measured
+here at one point as a continuous signal ~42dB above the noise floor
+around 868.47MHz, while the Davis channels themselves sat at the noise
+floor -- can desensitise the receiver across the *whole* band rather than
+just the channel it sits on.
+
+What that looks like, and why it is easy to misdiagnose:
+
+- `/status` shows NO SIGNAL, with packets arriving rarely or not at all.
+- The packets that *do* get through decode perfectly (valid CRC, AFC a few
+  hundred Hz), so nothing looks mistuned.
+- `rtldavis` reports a flood of `candidate failed all CRC checks` lines,
+  often all sharing the same leading bytes -- the demodulator slicing a
+  steady carrier, not real traffic. Rates of ~4/s were seen against the
+  0.4/s a real ISS transmits.
+- Missed-packet counts spread *evenly* across all five channels
+  (`missed per freq: [1 1 1 1 1]`) rather than clustering on the channel
+  the interferer occupies, because the whole front end is desensitised.
+
+The single most effective software lever is **gain**. Measured on a live
+station being blocked, 60 seconds per setting:
+
+| `rtldavis.gain` | packets decoded | bogus CRC candidates |
+| --- | --- | --- |
+| `0` (AGC/auto) | 10 | 106 |
+| `87` (8.7dB) | 0 | 257 |
+| `147` (14.7dB) | 0 | 254 |
+| `207` (20.7dB) | 0 | 265 |
+
+Every fixed gain decoded nothing while producing ~2.5x more garbage; AGC
+recovered the station immediately. Counter-intuitive but consistent with
+overload: with a strong wanted signal there is sensitivity to spare, and
+keeping the interferer out of the tuner's nonlinear region matters more.
+
+If AGC alone isn't enough, an inline 868MHz SAW bandpass filter is the
+durable fix -- it is effectively what a Davis console has and a bare
+dongle does not. An attenuator can also help when the wanted signal is
+strong. Note `maxmissed` matters too: a low value (e.g. `4`) makes
+`rtldavis` discard hard-won sync after only four consecutive misses and
+re-initialise endlessly, so interference-induced dropouts turn into a
+permanent failure to lock; the binary's own default of `51` rides them out.
+
+To confirm signal is genuinely present regardless of the dongle, a Davis
+console placed next to the receiver is an excellent reference: if it shows
+full reception while the dongle shows none, the fault is in the receive
+chain, not upstream at the ISS or repeater.
+
 ## Wireless repeater support
 
 **Status: working in production.** This project successfully receives and
@@ -166,6 +216,11 @@ natural transmitted-frame position in the middle. See
 and Python implementations respectively -- both independently confirmed
 against the same real captures.
 
+Note there is deliberately **no repeater battery reading** on `/status`:
+a Davis repeater transmits no telemetry of its own in this protocol, it
+only relays ISS packets, so there is nothing to report. The ISS battery
+flag shown there comes from the ISS's own packets (bit 3 of byte 0).
+
 **Not yet solved**: the 2 repeater-info bytes aren't a static per-repeater
 identifier like a "repeater A/B/C" letter. Empirically (20/20 samples, no
 exceptions) they correlate deterministically with the packet's
@@ -181,7 +236,10 @@ classic check; `source_rtldavis.py` parses the extra
 `davis_decode.is_valid_repeated_packet` independently re-verifies in
 Python; `__main__.py` accepts repeater packets into the same
 `clientraw*.txt` pipeline as direct ones; the status page shows "via
-repeater" when the most recent packet arrived that way, plus the current
+repeater" when the most recent packet arrived that way, how many of the
+last minute's packets were relayed versus direct (which is what separates a
+weak ISS-to-repeater hop from a weak repeater-to-receiver one), the raw
+repeater-info bytes, the ISS's own low-battery flag, plus the current
 AFC frequency correction (`rtldavis`'s own running per-transmitter drift
 compensation, now surfaced instead of silently applied).
 

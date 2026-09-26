@@ -85,12 +85,25 @@ class Application:
         self._last_rain_count: int | None = None
         self._last_wind_speed_kt: float | None = None
         self._packet_times: list[float] = []
+        # Arrival times of repeater-relayed packets only, pruned to the same
+        # 60s window as _packet_times, so /status can show how much of the
+        # traffic is coming via the repeater versus direct from the ISS.
+        self._repeated_packet_times: list[float] = []
         self._service_state = {
             "running_state": "starting",
             "last_packet_time": None,
             "last_packet_repeated": None,
             "last_freq_corr_hz": None,
             "packets_per_min": 0,
+            "repeated_packets_per_min": 0,
+            # The ISS transmits its own low-battery flag in every packet
+            # (bit 3 of byte 0). Decoded all along but previously discarded;
+            # a failing ISS battery weakens its transmissions, which is
+            # exactly the kind of fault that otherwise looks like
+            # interference or a bad aerial.
+            "iss_battery_low": None,
+            "iss_battery_at": None,
+            "last_repeater_info": None,
             "uploads": {},
             "current": {},
             "clientraw_txt": "",
@@ -130,9 +143,13 @@ class Application:
         if expected_id is not None and decoded.transmitter_id != expected_id:
             return
 
-        self._packet_times.append(time.time())
+        now_mono = time.time()
+        self._packet_times.append(now_mono)
+        if received.repeated:
+            self._repeated_packet_times.append(now_mono)
         cutoff = time.time() - 60
         self._packet_times = [t for t in self._packet_times if t > cutoff]
+        self._repeated_packet_times = [t for t in self._repeated_packet_times if t > cutoff]
 
         # Vane mounting offset (e.g. not pointing exactly at true north) --
         # applied first, so the corrected bearing is what gets stored,
@@ -201,8 +218,14 @@ class Application:
         with self._lock:
             self._service_state["last_packet_time"] = datetime.now(dt_timezone.utc).isoformat()
             self._service_state["packets_per_min"] = len(self._packet_times)
+            self._service_state["repeated_packets_per_min"] = len(self._repeated_packet_times)
             self._service_state["last_packet_repeated"] = received.repeated
             self._service_state["last_freq_corr_hz"] = received.freq_corr_hz
+            self._service_state["iss_battery_low"] = decoded.battery_low
+            self._service_state["iss_battery_at"] = datetime.now(dt_timezone.utc).isoformat()
+            self._service_state["last_repeater_info"] = (
+                list(received.repeater_info) if received.repeater_info else None
+            )
 
     def _read_bme280_pressure(self) -> float | None:
         try:

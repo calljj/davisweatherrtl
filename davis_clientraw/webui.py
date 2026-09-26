@@ -396,6 +396,47 @@ def create_app(
         afc_hz = state.get("last_freq_corr_hz")
         afc_html = f"{afc_hz:+d} Hz" if afc_hz is not None else "unknown"
 
+        # ISS battery: transmitted in every packet (bit 3 of byte 0). A weak
+        # ISS battery reduces its transmit reliability, which presents as
+        # missing packets rather than as an obvious battery error anywhere.
+        batt = state.get("iss_battery_low")
+        batt_at = state.get("iss_battery_at")
+        if batt is None:
+            iss_batt_html = "unknown (no packet decoded yet)"
+        else:
+            age = ""
+            if batt_at:
+                secs = (
+                    dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(batt_at)
+                ).total_seconds()
+                age = f" (as of {secs:.0f}s ago)"
+            if batt:
+                iss_batt_html = f'<span class="fail">LOW</span>{age}'
+            else:
+                iss_batt_html = f'<span class="ok">OK</span>{age}'
+
+        # Davis repeaters don't transmit their own telemetry in this
+        # protocol -- they only relay ISS packets -- so there is no repeater
+        # battery reading to show. What is measurable is how much traffic is
+        # arriving relayed versus direct, which is what distinguishes a weak
+        # ISS-to-repeater hop from a weak repeater-to-here hop.
+        ppm_total = state.get("packets_per_min", 0)
+        ppm_repeated = state.get("repeated_packets_per_min", 0)
+        rpt_info = state.get("last_repeater_info")
+        if ppm_total:
+            repeater_html = (
+                f"{ppm_repeated} of {ppm_total} packets in the last minute arrived via "
+                f"repeater ({ppm_total - ppm_repeated} direct from ISS)"
+            )
+        else:
+            repeater_html = "no packets in the last minute"
+        if rpt_info:
+            repeater_html += (
+                "  &nbsp; last repeater-info bytes: "
+                + " ".join(f"0x{b:02X}" for b in rpt_info)
+                + " <em>(meaning not yet decoded)</em>"
+            )
+
         # No station number set means rtldavis is told to track all 8
         # transmitter IDs -- and it only leaves its startup "init" phase once
         # it has seen a packet from *every* transmitter it was told to track,
@@ -438,6 +479,8 @@ def create_app(
         <p>Packets/min: {state.get('packets_per_min', 0)}</p>
         <p>{channels_label}: {channels_html} &nbsp; <a href="{url_for('calibrate_page')}">(recalibrate)</a></p>
         <p>AFC correction (last packet): {afc_html}</p>
+        <p>ISS battery: {iss_batt_html}</p>
+        <p>Repeater: {repeater_html}</p>
         <form method="post" action="{url_for('send_now')}"><button>Send now</button></form>
         <h3>Current conditions</h3>
         <table>{rows}</table>
