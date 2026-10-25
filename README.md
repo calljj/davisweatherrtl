@@ -303,7 +303,10 @@ usual intervals; only the value in them is steadier. Gust (field 2) is
 deliberately *not* averaged -- it remains the raw 60-second peak below,
 so average + gust still shows how gusty it is. The instantaneous
 readings stay visible on `/status` as `wind_speed_raw_kt` /
-`wind_dir_raw_deg`. Everything downstream (minute history, hourly file,
+`wind_dir_raw_deg`. The peak raw reading over the same window is also
+published, in field 140 (Weather Display's "max gust in the last
+minute" slot, repurposed as the nearest spare field) -- a display can
+show "average + N-minute max" from fields 1 and 140. Everything downstream (minute history, hourly file,
 daily max fields, kiosk, website) sees the averaged value. Requires a
 service restart to take effect.
 

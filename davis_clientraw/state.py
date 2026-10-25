@@ -240,6 +240,10 @@ class StationState:
                             if v is not None and now - t <= self.wind_avg_window_sec
                         ]
                         fields["wind_speed_kt"] = sum(speeds) / len(speeds)
+                        # Peak raw reading over the same window -- the
+                        # "how hard has it blown in the last few minutes"
+                        # companion to the mean (a longer-window gust).
+                        fields["wind_speed_window_max_kt"] = max(speeds)
                     if wind_dir_deg is not None:
                         fields["wind_dir_raw_deg"] = wind_dir_deg
                         dirs = [

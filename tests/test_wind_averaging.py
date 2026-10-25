@@ -41,6 +41,18 @@ def test_gust_is_still_the_raw_peak_not_the_average(state, monkeypatch):
     assert state.current["wind_speed_kt"] == pytest.approx(13.75)
 
 
+def test_window_max_is_peak_raw_reading_over_window(state, monkeypatch):
+    for i, speed in enumerate([10.0, 30.0, 20.0]):
+        _set_clock(monkeypatch, 1000.0 + 2.5 * i)
+        state.update_current(wind_speed_kt=speed)
+    assert state.current["wind_speed_window_max_kt"] == 30.0
+    # ... and it ages out with the window, unlike a day max (last sample
+    # was at t=1005, so jump past 1005 + window).
+    _set_clock(monkeypatch, 1005.0 + 300 + 1)
+    state.update_current(wind_speed_kt=5.0)
+    assert state.current["wind_speed_window_max_kt"] == 5.0
+
+
 def test_readings_older_than_window_fall_out(state, monkeypatch):
     _set_clock(monkeypatch, 1000.0)
     state.update_current(wind_speed_kt=40.0)

@@ -93,6 +93,12 @@ def generate_clientraw(state: StationState, config: dict, template_tokens: list[
     _set(tokens, P, "wind_average_direction", _fmt(state.average_wind_dir_deg(), 0))
     _set(tokens, P, "day_gust_speed_max", _fmt(d.get("gust_max_kt")))
     _set(tokens, P, "gust_speed_last_hour_max", _fmt(state.gust_max_last_hour_kt()))
+    # Field 140. Weather Display defines it as "max gust in the last
+    # minute"; with wind averaging on it carries the peak raw wind speed
+    # over the averaging window instead (see README "Rolling wind
+    # average"), the nearest spare slot to that meaning. Left at the
+    # template value when averaging is off.
+    _set(tokens, P, "gust_speed_in_l_minute_max", _fmt(c.get("wind_speed_window_max_kt")))
     _set(tokens, P, "temperature", _fmt(c.get("temp_c")))
     _set(tokens, P, "humidity", _fmt(c.get("humidity_pct"), 0))
     _set(tokens, P, "barometer", _fmt(c.get("pressure_hpa")))
