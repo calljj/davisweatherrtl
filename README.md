@@ -288,6 +288,25 @@ they're stored -- the corrected value is what's in `clientraw.txt` and
 everywhere downstream (including a kiosk display reading that file), not
 just this app's own `/status` page.
 
+## Rolling wind average (smoothing)
+
+The ISS reports wind every ~2.5 s, and publishing each reading as-is
+makes the "current" wind on a display or website flicker between every
+lull and puff. Set `wind_averaging.window_sec` in `config.json` (e.g.
+`300` for a 5-minute average; `0`, the default, turns it off) and the
+"current" wind speed (`clientraw.txt` field 1) and direction (field 3)
+become a rolling mean over that window instead -- speed as a plain mean
+of every reading in the window, direction as a circular mean (so
+350&deg;/10&deg; averages to 0&deg;, not 180&deg;). The window slides
+with every packet, so files are still regenerated and uploaded on their
+usual intervals; only the value in them is steadier. Gust (field 2) is
+deliberately *not* averaged -- it remains the raw 60-second peak below,
+so average + gust still shows how gusty it is. The instantaneous
+readings stay visible on `/status` as `wind_speed_raw_kt` /
+`wind_dir_raw_deg`. Everything downstream (minute history, hourly file,
+daily max fields, kiosk, website) sees the averaged value. Requires a
+service restart to take effect.
+
 ## Gust calculation
 
 The ISS also transmits its own gust figure in occasional sub-packets, but

@@ -24,6 +24,27 @@ def _now(tz: str) -> datetime:
     return datetime.now(ZoneInfo(tz))
 
 
+def _circular_mean_deg(directions_deg: list[float]) -> Optional[float]:
+    """Circular mean of compass bearings. A plain arithmetic mean breaks
+    near due north -- averaging 350 and 10 would naively give 180 (due
+    south) instead of 0 -- so this averages the sin/cos components and
+    converts back at the end, which handles that wraparound correctly.
+    Returns None for no samples, or when the samples cancel out (near-)
+    exactly -- e.g. an even split between opposing directions -- since
+    the mean direction is then genuinely undefined rather than an
+    arbitrary artifact of floating-point noise."""
+    if not directions_deg:
+        return None
+    sin_sum = sum(math.sin(math.radians(d)) for d in directions_deg)
+    cos_sum = sum(math.cos(math.radians(d)) for d in directions_deg)
+    if math.hypot(sin_sum, cos_sum) < 1e-9:
+        return None
+    # Rounded before the modulo so floating-point noise at the 0/360
+    # boundary (e.g. averaging 350 and 10) can't land on 360.0 instead
+    # of the equivalent, cleaner 0.0.
+    return round(math.degrees(math.atan2(sin_sum, cos_sum)), 6) % 360
+
+
 @dataclass
 class Record:
     value: float
@@ -53,8 +74,18 @@ class Record:
 class StationState:
     """Thread-safe in-memory station state, snapshotted to SQLite."""
 
-    def __init__(self, db_path: str, timezone: str):
+    def __init__(self, db_path: str, timezone: str, wind_avg_window_sec: float = 0.0):
         self.timezone = timezone
+        # Length of the rolling window the published "current" wind speed
+        # and direction are averaged over (0 = off: publish each ~2.5s
+        # reading as-is). The ISS reports every ~2.5s, and a display
+        # refreshing at that rate flickers between every little lull and
+        # puff; averaging over a few minutes gives the steadier figure a
+        # viewer actually wants, in the same way forecasts and other
+        # stations quote a mean wind. Gust is deliberately NOT averaged --
+        # it stays the raw peak over GUST_WINDOW_SEC, so "average + gust"
+        # still conveys how gusty it is.
+        self.wind_avg_window_sec = float(wind_avg_window_sec or 0.0)
         self._lock = threading.RLock()
         self._db = sqlite3.connect(db_path, check_same_thread=False)
         self._db.execute(
@@ -69,10 +100,14 @@ class StationState:
         self.rain_counters: dict[str, Any] = {}
         # Day-of-month arrays (index 0 = day 1) for clientrawdaily.txt, None = no data yet.
         self.daily_of_month: dict[str, list[Optional[float]]] = {}
-        # (monotonic_time, wind_speed_kt) samples within GUST_WINDOW_SEC --
-        # transient, in-memory only (a restart losing up to a minute of
-        # window is harmless, unlike the persisted state above).
-        self._speed_samples: list[tuple[float, float]] = []
+        # (monotonic_time, wind_speed_kt or None, wind_dir_deg or None)
+        # samples kept for the longer of GUST_WINDOW_SEC and
+        # wind_avg_window_sec -- transient, in-memory only (a restart
+        # losing a few minutes of window is harmless, unlike the persisted
+        # state above; the average just rebuilds from the packets that
+        # follow). A sample may lack speed (spike filter dropped it) or
+        # direction, hence the Nones.
+        self._wind_samples: list[tuple[float, Optional[float], Optional[float]]] = []
 
         self._load()
         self._roll_day_if_needed()
@@ -179,13 +214,41 @@ class StationState:
             self._roll_day_if_needed()
 
             wind_speed_kt = fields.get("wind_speed_kt")
-            if wind_speed_kt is not None:
+            wind_dir_deg = fields.get("wind_dir_deg")
+            if wind_speed_kt is not None or wind_dir_deg is not None:
                 now = time.monotonic()
-                self._speed_samples.append((now, wind_speed_kt))
-                self._speed_samples = [
-                    (t, v) for t, v in self._speed_samples if now - t <= GUST_WINDOW_SEC
-                ]
-                fields["gust_kt"] = max(v for _, v in self._speed_samples)
+                self._wind_samples.append((now, wind_speed_kt, wind_dir_deg))
+                keep_sec = max(GUST_WINDOW_SEC, self.wind_avg_window_sec)
+                self._wind_samples = [s for s in self._wind_samples if now - s[0] <= keep_sec]
+
+                if wind_speed_kt is not None:
+                    # Gust = peak of the RAW readings in the short window,
+                    # never of the averaged ones.
+                    fields["gust_kt"] = max(
+                        v for t, v, _ in self._wind_samples
+                        if v is not None and now - t <= GUST_WINDOW_SEC
+                    )
+
+                if self.wind_avg_window_sec > 0:
+                    # Publish the rolling mean as the "current" value; keep
+                    # the instantaneous reading alongside (raw_*) so the
+                    # /status page still shows what the ISS actually sent.
+                    if wind_speed_kt is not None:
+                        fields["wind_speed_raw_kt"] = wind_speed_kt
+                        speeds = [
+                            v for t, v, _ in self._wind_samples
+                            if v is not None and now - t <= self.wind_avg_window_sec
+                        ]
+                        fields["wind_speed_kt"] = sum(speeds) / len(speeds)
+                    if wind_dir_deg is not None:
+                        fields["wind_dir_raw_deg"] = wind_dir_deg
+                        dirs = [
+                            d for t, _, d in self._wind_samples
+                            if d is not None and now - t <= self.wind_avg_window_sec
+                        ]
+                        mean_dir = _circular_mean_deg(dirs)
+                        if mean_dir is not None:
+                            fields["wind_dir_deg"] = mean_dir
 
             self.current.update(fields)
 
@@ -259,20 +322,7 @@ class StationState:
         sin/cos components instead and converts back at the end, which
         handles that wraparound correctly."""
         samples = self.minute_history[-window_minutes:]
-        if not samples:
-            return None
-        sin_sum = sum(math.sin(math.radians(s["wind_dir_deg"])) for s in samples)
-        cos_sum = sum(math.cos(math.radians(s["wind_dir_deg"])) for s in samples)
-        if math.hypot(sin_sum, cos_sum) < 1e-9:
-            # Samples cancel out (near-)exactly -- e.g. an even split
-            # between opposing directions -- so the mean direction is
-            # genuinely undefined rather than an arbitrary artifact of
-            # floating-point noise.
-            return None
-        # Rounded before the modulo so floating-point noise at the 0/360
-        # boundary (e.g. averaging 350 and 10) can't land on 360.0 instead
-        # of the equivalent, cleaner 0.0.
-        return round(math.degrees(math.atan2(sin_sum, cos_sum)), 6) % 360
+        return _circular_mean_deg([s["wind_dir_deg"] for s in samples])
 
     def gust_max_last_hour_kt(self) -> Optional[float]:
         """Peak gust across minute_history, which is itself capped at the

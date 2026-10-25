@@ -68,7 +68,9 @@ class Application:
         self.config_path = config_path
         self.config = self._load_config()
         self.state = StationState(
-            self.config["state_db"], self.config["station"]["timezone"]
+            self.config["state_db"],
+            self.config["station"]["timezone"],
+            wind_avg_window_sec=self.config.get("wind_averaging", {}).get("window_sec", 0),
         )
         self.templates = {
             name: clientraw.load_template(self.config["templates_dir"], name)

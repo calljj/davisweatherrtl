@@ -29,6 +29,9 @@
     "sectors": [],
     "direction_offset_deg": 0
   },
+  "wind_averaging": {
+    "window_sec": 0
+  },
   "pressure": {
     "source": "placeholder",
     "placeholder_hpa": 1013.2,
